@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bookmark-manager-app
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+      - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
+    restart: unless-stopped

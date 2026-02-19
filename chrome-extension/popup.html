@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Summary Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; }
+        body { font-family: sans-serif; background: #1a1a1a; color: #333; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* Top bar */
+        .toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #2a2a2a; border-bottom: 1px solid #444; }
+        .toolbar h1 { font-size: 1em; color: #fff; flex: 1; }
+        .api-status { display: flex; align-items: center; gap: 6px; font-size: 0.8em; color: #aaa; }
+        .api-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; flex-shrink: 0; }
+
+        /* Current video strip */
+        .video-strip { padding: 8px 12px; background: #222; border-bottom: 1px solid #444; display: flex; align-items: center; gap: 12px; }
+        .video-strip #currentVideoInfo { flex: 1; font-size: 0.85em; color: #ccc; }
+        .video-strip #currentVideoInfo h3 { font-size: 0.95em; color: #fff; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 650px; }
+        .video-strip #currentVideoInfo p { font-size: 0.8em; color: #999; }
+        button { cursor: pointer; padding: 6px 14px; border: none; border-radius: 4px; font-size: 0.85em; background: #007bff; color: #fff; white-space: nowrap; }
+        button:hover { background: #0056b3; }
+
+        /* Status message */
+        #statusMessage { padding: 6px 12px; font-size: 0.82em; background: #2a2a2a; border-bottom: 1px solid #444; }
+
+        /* BookMarkManager iframe — wrapper allows horizontal scroll */
+        .iframe-wrap { flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; }
+        iframe { display: block; border: none; width: 100%; height: 100%; min-width: 1100px; }
+
+        /* Offline message */
+        .offline-msg { display: flex; flex: 1; min-height: 0; flex-direction: column; align-items: center; justify-content: center; color: #888; gap: 8px; }
+        .offline-msg p { font-size: 0.95em; }
+        .offline-msg code { background: #333; color: #ccc; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <div class="toolbar" id="toolbar">
+        <h1>YouTube Summary Manager</h1>
+        <div class="api-status">
+            <span class="api-status-dot" id="apiStatusDot"></span>
+            <span id="apiStatusText">Checking...</span>
+        </div>
+    </div>
+
+    <div class="video-strip" id="videoStrip">
+        <div id="currentVideoInfo">Loading current video...</div>
+        <button id="saveCurrentVideoButton" class="hidden">Save to BookMarkManager</button>
+    </div>
+
+    <div id="statusMessage" class="hidden"></div>
+
+    <div class="iframe-wrap" id="iframeWrap">
+        <iframe id="bookmarkFrame" src="http://localhost:5000" title="BookMarkManager"></iframe>
+    </div>
+    <div id="offlineMsg" class="offline-msg hidden">
+        <p>BookMarkManager is not running.</p>
+        <p>Start the Docker container:</p>
+        <code>docker compose up -d --build</code>
+    </div>
+
+    <script src="resize.js"></script>
+    <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# Frontend
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# Backend
+backend/__pycache__
+backend/**/__pycache__
+backend/*.pyc
+backend/.env
+backend/data/*.db
+
+# Git and IDE
+.git
+.gitignore
+.cursor
+*.md
+!backend/requirements.txt
