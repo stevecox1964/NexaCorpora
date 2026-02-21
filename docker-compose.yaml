@@ -12,4 +12,6 @@ services:
       - FLASK_ENV=production
       - PYTHONUNBUFFERED=1
       - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
     restart: unless-stopped

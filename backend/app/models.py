@@ -2,6 +2,30 @@ from .database import get_db
 from datetime import datetime
 import uuid
 
+
+class Setting:
+    @staticmethod
+    def get(key):
+        db = get_db()
+        cursor = db.execute('SELECT value FROM settings WHERE key = ?', (key,))
+        row = cursor.fetchone()
+        return row['value'] if row else None
+
+    @staticmethod
+    def set(key, value):
+        db = get_db()
+        db.execute(
+            'INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
+            (key, value, datetime.utcnow().isoformat())
+        )
+        db.commit()
+
+    @staticmethod
+    def get_all():
+        db = get_db()
+        cursor = db.execute('SELECT key, value FROM settings')
+        return {row['key']: row['value'] for row in cursor.fetchall()}
+
 class Video:
     @staticmethod
     def get_all(limit=20, offset=0):
@@ -9,6 +33,7 @@ class Video:
         cursor = db.execute('''
             SELECT v.*,
                    (t.id IS NOT NULL) AS has_transcript,
+                   (t.summary IS NOT NULL AND t.summary != '') AS has_summary,
                    j.status AS job_status
             FROM videos v
             LEFT JOIN transcripts t ON v.video_id = t.video_id
@@ -89,6 +114,8 @@ class Video:
         }
         if 'has_transcript' in row.keys():
             result['hasTranscript'] = bool(row['has_transcript'])
+        if 'has_summary' in row.keys():
+            result['hasSummary'] = bool(row['has_summary'])
         if 'job_status' in row.keys():
             result['transcriptJobStatus'] = row['job_status']
         return result
@@ -132,6 +159,25 @@ class Transcript:
             raise e
 
     @staticmethod
+    def update_summary(video_id, summary):
+        db = get_db()
+        db.execute('UPDATE transcripts SET summary = ? WHERE video_id = ?', (summary, video_id))
+        db.commit()
+        return Transcript.get_by_video_id(video_id)
+
+    @staticmethod
+    def get_all_summaries():
+        db = get_db()
+        cursor = db.execute('''
+            SELECT t.video_id, t.summary, v.video_title, v.channel_name
+            FROM transcripts t
+            JOIN videos v ON t.video_id = v.video_id
+            WHERE t.summary IS NOT NULL AND t.summary != ''
+            ORDER BY v.scraped_at DESC
+        ''')
+        return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
     def row_to_dict(row):
         if row is None:
             return None
@@ -141,6 +187,8 @@ class Transcript:
             'content': row['content'],
             'indexedAt': row['indexed_at']
         }
+        if 'summary' in row.keys():
+            result['summary'] = row['summary']
         if 'video_title' in row.keys():
             result['videoTitle'] = row['video_title']
             result['videoUrl'] = row['video_url']

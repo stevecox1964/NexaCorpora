@@ -5,7 +5,7 @@ import logging
 import yt_dlp
 import assemblyai as aai
 
-from .models import Job, Transcript, Video
+from .models import Job, Transcript, Video, Setting
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,36 @@ def transcribe_audio(audio_file_path, api_key):
     return transcript.text
 
 
-def run_transcription_job(app, job_id, video_id, api_key):
+def transcribe_audio_gemini(audio_file_path, api_key):
+    """Transcribe an audio file using Gemini multimodal capabilities."""
+    import google.generativeai as genai
+    genai.configure(api_key=api_key)
+
+    logger.info(f'Uploading audio to Gemini Files API: {audio_file_path}')
+    audio_file = genai.upload_file(audio_file_path, mime_type='audio/mp3')
+
+    model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+    model = genai.GenerativeModel(model_name)
+
+    logger.info(f'Requesting transcription from Gemini model: {model_name}')
+    response = model.generate_content(
+        [
+            "Generate a complete, verbatim transcript of the speech in this audio file. "
+            "Include all spoken words accurately. Do not add timestamps, speaker labels, "
+            "or commentary — just output the plain text of what was said.",
+            audio_file
+        ]
+    )
+
+    try:
+        genai.delete_file(audio_file.name)
+    except Exception:
+        pass
+
+    return response.text
+
+
+def run_transcription_job(app, job_id, video_id, api_key, provider='assemblyai'):
     """Background thread: download audio, transcribe, store result."""
     tmp_dir = tempfile.mkdtemp(prefix='bm_transcribe_')
 
@@ -59,10 +88,13 @@ def run_transcription_job(app, job_id, video_id, api_key):
             logger.info(f'Downloading audio for {video_id}')
             audio_path = download_audio(video['videoUrl'], tmp_dir)
 
-            # Step 2: Transcribe with AssemblyAI
+            # Step 2: Transcribe with selected provider
             Job.update_status(job_id, 'transcribing')
-            logger.info(f'Transcribing {video_id} with AssemblyAI')
-            text = transcribe_audio(audio_path, api_key)
+            logger.info(f'Transcribing {video_id} with {provider}')
+            if provider == 'gemini':
+                text = transcribe_audio_gemini(audio_path, api_key)
+            else:
+                text = transcribe_audio(audio_path, api_key)
 
             if not text:
                 Job.update_status(job_id, 'failed', 'Transcription returned empty text')
@@ -90,9 +122,10 @@ def run_transcription_job(app, job_id, video_id, api_key):
                 pass
 
 
-def start_transcription(app, video_id):
+def start_transcription(app, video_id, provider=None):
     """Validate and kick off a transcription job in a background thread.
     Returns (job_dict, error_string, http_status_code).
+    If provider is None, reads from the settings table.
     """
     video = Video.get_by_video_id(video_id)
     if not video:
@@ -106,15 +139,23 @@ def start_transcription(app, video_id):
     if active_job:
         return active_job, 'Transcription already in progress', 409
 
-    api_key = os.environ.get('ASSEMBLYAI_API_KEY')
-    if not api_key:
-        return None, 'ASSEMBLYAI_API_KEY not configured', 500
+    if provider is None:
+        provider = Setting.get('transcription_provider') or 'assemblyai'
+
+    if provider == 'gemini':
+        api_key = os.environ.get('GOOGLE_API_KEY')
+        if not api_key:
+            return None, 'GOOGLE_API_KEY not configured', 500
+    else:
+        api_key = os.environ.get('ASSEMBLYAI_API_KEY')
+        if not api_key:
+            return None, 'ASSEMBLYAI_API_KEY not configured', 500
 
     job = Job.create(video_id, 'transcribe')
 
     thread = threading.Thread(
         target=run_transcription_job,
-        args=(app, job['id'], video_id, api_key),
+        args=(app, job['id'], video_id, api_key, provider),
         daemon=True
     )
     thread.start()

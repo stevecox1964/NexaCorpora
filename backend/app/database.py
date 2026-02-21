@@ -66,4 +66,29 @@ def init_db(app):
         db.execute('CREATE INDEX IF NOT EXISTS idx_jobs_video_id ON jobs(video_id)')
         db.execute('CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)')
 
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Add summary column to transcripts (idempotent migration)
+        try:
+            db.execute('ALTER TABLE transcripts ADD COLUMN summary TEXT')
+        except Exception:
+            pass  # Column already exists
+
+        # Seed default settings (INSERT OR IGNORE keeps existing values)
+        db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            ('transcription_provider', 'assemblyai')
+        )
+        default_model = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+        db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            ('gemini_model', default_model)
+        )
+
         db.commit()

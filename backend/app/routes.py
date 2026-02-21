@@ -1,5 +1,7 @@
-from flask import Blueprint, request, jsonify, current_app
-from .models import Video, Job, Transcript
+import os
+import json
+from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
+from .models import Video, Job, Transcript, Setting
 from .bookmarks import get_chrome_youtube_bookmarks
 from . import transcripts
 from .transcription_service import start_transcription
@@ -200,7 +202,7 @@ def get_transcript_status(video_id):
 
 @bp.route('/transcribe/<video_id>', methods=['POST'])
 def transcribe_video(video_id):
-    """Start a transcription job for a video."""
+    """Start a transcription job for a video. Provider is read from settings table."""
     job, error, status_code = start_transcription(current_app._get_current_object(), video_id)
 
     if error:
@@ -228,3 +230,172 @@ def get_video_job(video_id):
     """Get the active transcription job for a video."""
     job = Job.get_active_by_video_id(video_id, 'transcribe')
     return jsonify({'success': True, 'job': job})
+
+
+# Chat endpoints
+
+@bp.route('/chat', methods=['POST'])
+def chat():
+    """Stream a chat response using Gemini with transcript context."""
+    data = request.get_json()
+    if not data or 'message' not in data:
+        return jsonify({'success': False, 'error': 'Message is required'}), 400
+
+    user_message = data['message']
+    conversation_history = data.get('history', [])
+
+    try:
+        from .gemini_service import chat_with_knowledge_base
+
+        def generate():
+            try:
+                for chunk in chat_with_knowledge_base(user_message, conversation_history):
+                    yield f"data: {json.dumps({'text': chunk})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+            except ValueError as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'error': f'Chat failed: {str(e)}'})}\n\n"
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no'
+            }
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Summary endpoints
+
+@bp.route('/summaries/<video_id>', methods=['POST'])
+def generate_summary(video_id):
+    """Generate a summary for a video's transcript using Gemini."""
+    try:
+        from .gemini_service import generate_summary as gen_summary
+        result, error = gen_summary(video_id)
+        if error:
+            return jsonify({'success': False, 'error': error}), 400
+        return jsonify({'success': True, 'transcript': result})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Summary generation failed: {str(e)}'}), 500
+
+
+@bp.route('/summaries/<video_id>', methods=['GET'])
+def get_summary(video_id):
+    """Get the summary for a video."""
+    transcript = Transcript.get_by_video_id(video_id)
+    if not transcript:
+        return jsonify({'success': False, 'error': 'Transcript not found'}), 404
+    return jsonify({
+        'success': True,
+        'summary': transcript.get('summary'),
+        'videoId': video_id
+    })
+
+
+@bp.route('/summaries/bulk', methods=['POST'])
+def generate_bulk_summaries():
+    """Generate summaries for all transcripts that don't have one."""
+    try:
+        from .gemini_service import generate_summary as gen_summary
+
+        all_transcripts = Transcript.search('')  # Get all transcripts
+        to_summarize = []
+        for t in all_transcripts:
+            full = Transcript.get_by_video_id(t['videoId'])
+            if full and not full.get('summary'):
+                to_summarize.append(full)
+
+        if not to_summarize:
+            return jsonify({
+                'success': True,
+                'message': 'All transcripts already have summaries',
+                'generated': 0
+            })
+
+        generated = 0
+        errors = []
+        for t in to_summarize:
+            try:
+                result, error = gen_summary(t['videoId'])
+                if error:
+                    errors.append({'videoId': t['videoId'], 'error': error})
+                else:
+                    generated += 1
+            except Exception as e:
+                errors.append({'videoId': t['videoId'], 'error': str(e)})
+
+        return jsonify({
+            'success': True,
+            'generated': generated,
+            'errors': errors,
+            'total': len(to_summarize)
+        })
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Settings endpoints
+
+@bp.route('/settings', methods=['GET'])
+def get_settings():
+    """Get all application settings and API key configuration status."""
+    settings = Setting.get_all()
+    return jsonify({
+        'success': True,
+        'settings': settings,
+        'apiKeys': {
+            'assemblyai': bool(os.environ.get('ASSEMBLYAI_API_KEY')),
+            'google': bool(os.environ.get('GOOGLE_API_KEY'))
+        }
+    })
+
+
+@bp.route('/settings', methods=['PUT'])
+def update_settings():
+    """Update application settings."""
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+    allowed_keys = {
+        'transcription_provider': ['assemblyai', 'gemini'],
+        'gemini_model': ['gemini-2.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash-lite']
+    }
+
+    for key, value in data.items():
+        if key not in allowed_keys:
+            return jsonify({'success': False, 'error': f'Unknown setting: {key}'}), 400
+        if value not in allowed_keys[key]:
+            return jsonify({'success': False, 'error': f'Invalid value for {key}: {value}'}), 400
+        Setting.set(key, value)
+
+    return jsonify({'success': True, 'settings': Setting.get_all()})
+
+
+# Stats endpoint
+
+@bp.route('/stats', methods=['GET'])
+def get_stats():
+    """Get application statistics."""
+    from .database import get_db
+    db = get_db()
+    total_videos = db.execute('SELECT COUNT(*) as c FROM videos').fetchone()['c']
+    total_transcripts = db.execute('SELECT COUNT(*) as c FROM transcripts').fetchone()['c']
+    total_summaries = db.execute(
+        "SELECT COUNT(*) as c FROM transcripts WHERE summary IS NOT NULL AND summary != ''"
+    ).fetchone()['c']
+    return jsonify({
+        'success': True,
+        'totalVideos': total_videos,
+        'totalTranscripts': total_transcripts,
+        'totalSummaries': total_summaries
+    })

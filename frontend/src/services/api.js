@@ -95,6 +95,124 @@ class ApiService {
     const response = await fetch(`${API_BASE}/health`);
     return response.ok;
   }
+
+  // Chat with knowledge base via SSE streaming
+  async chatStream(message, history, onChunk, onDone, onError) {
+    try {
+      const response = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, history }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Chat request failed');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.error) {
+                onError(data.error);
+                return;
+              }
+              if (data.done) {
+                onDone();
+                return;
+              }
+              if (data.text) {
+                onChunk(data.text);
+              }
+            } catch (e) {
+              // Skip malformed JSON
+            }
+          }
+        }
+      }
+      onDone();
+    } catch (err) {
+      onError(err.message);
+    }
+  }
+
+  // Generate summary for a single video
+  async generateSummary(videoId) {
+    const response = await fetch(`${API_BASE}/summaries/${videoId}`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to generate summary');
+    }
+    return response.json();
+  }
+
+  // Get summary for a video
+  async getSummary(videoId) {
+    const response = await fetch(`${API_BASE}/summaries/${videoId}`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch summary');
+    }
+    return response.json();
+  }
+
+  // Bulk generate summaries for all transcripts without one
+  async generateBulkSummaries() {
+    const response = await fetch(`${API_BASE}/summaries/bulk`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to generate bulk summaries');
+    }
+    return response.json();
+  }
+
+  // Get application settings
+  async getSettings() {
+    const response = await fetch(`${API_BASE}/settings`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch settings');
+    }
+    return response.json();
+  }
+
+  // Update application settings
+  async updateSettings(settings) {
+    const response = await fetch(`${API_BASE}/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to update settings');
+    }
+    return response.json();
+  }
+
+  // Get application statistics
+  async getStats() {
+    const response = await fetch(`${API_BASE}/stats`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch stats');
+    }
+    return response.json();
+  }
 }
 
 export const apiService = new ApiService();
