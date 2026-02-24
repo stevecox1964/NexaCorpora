@@ -213,6 +213,69 @@ class ApiService {
     }
     return response.json();
   }
+
+  // Semantic search across transcripts
+  async semanticSearch(query, k = 20) {
+    const response = await fetch(
+      `${API_BASE}/search?q=${encodeURIComponent(query)}&k=${k}`
+    );
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Search failed');
+    }
+    return response.json();
+  }
+
+  // Build embeddings for all unembedded transcripts
+  async buildEmbeddings() {
+    const response = await fetch(`${API_BASE}/embeddings/build`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to build embeddings');
+    }
+    return response.json();
+  }
+
+  // Get embedding status
+  async getEmbeddingStatus() {
+    const response = await fetch(`${API_BASE}/embeddings/status`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch embedding status');
+    }
+    return response.json();
+  }
+
+  // Build topic clusters
+  async buildClusters() {
+    const response = await fetch(`${API_BASE}/clusters/build`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to build clusters');
+    }
+    return response.json();
+  }
+
+  // Get all topic clusters
+  async getClusters() {
+    const response = await fetch(`${API_BASE}/clusters`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch clusters');
+    }
+    return response.json();
+  }
+
+  // Get videos in a cluster
+  async getClusterVideos(clusterId) {
+    const response = await fetch(`${API_BASE}/clusters/${clusterId}/videos`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch cluster videos');
+    }
+    return response.json();
+  }
 }
 
 export const apiService = new ApiService();

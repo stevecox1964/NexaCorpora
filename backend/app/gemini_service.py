@@ -52,23 +52,27 @@ def generate_summary(video_id):
 def chat_with_knowledge_base(user_message, conversation_history=None):
     """Generator that yields text chunks for SSE streaming.
 
-    Searches transcripts for relevant context, then streams a Gemini response.
+    Uses vector similarity search for context retrieval, falling back to
+    summaries when no embeddings exist.
     """
-    # Search for relevant transcripts using existing LIKE search
-    relevant_transcripts = Transcript.search(user_message)
+    context = None
 
-    # Build context from matching transcripts
-    if relevant_transcripts:
-        context_parts = []
-        for t in relevant_transcripts[:5]:
-            title = t.get('videoTitle', 'Unknown')
-            content = t.get('content', '')
-            if len(content) > 4000:
-                content = content[:4000] + '... [truncated]'
-            context_parts.append(f"=== Video: {title} ===\n{content}")
-        context = "\n\n".join(context_parts)
-    else:
-        # Fallback: use summaries as lightweight context
+    # Primary: vector similarity search over transcript chunks
+    try:
+        from .embedding_service import search_similar
+        results = search_similar(user_message, k=8)
+        if results:
+            context_parts = []
+            for r in results:
+                title = r.get('video_title', 'Unknown')
+                content = r.get('content', '')
+                context_parts.append(f"=== Video: {title} ===\n{content}")
+            context = "\n\n".join(context_parts)
+    except Exception:
+        pass
+
+    # Fallback: summaries when vector search returns nothing or fails
+    if not context:
         summaries = Transcript.get_all_summaries()
         if summaries:
             context_parts = []

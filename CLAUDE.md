@@ -36,7 +36,8 @@ Background thread:
      - Gemini Audio: uploads via genai.upload_file() + generate_content() for transcription
   3. Stores transcript text in SQLite transcripts table
   4. Updates job status → "completed"
-  5. Cleans up temp files
+  5. Auto-embeds transcript chunks for vector search (non-fatal if it fails)
+  6. Cleans up temp files
      ↓
 Frontend sees "completed" → shows green "View" button
 User clicks "View" → TranscriptModal fetches GET /api/transcripts/<video_id>
@@ -56,20 +57,50 @@ Summary stored in transcripts.summary column
 Frontend shows expandable summary inline on the video row
 ```
 
-### Chat Flow
+### Chat Flow (RAG with Vector Search)
 ```
 User opens chat drawer (blue FAB button, bottom-right)
      ↓ types question, hits Send
 Frontend POST /api/chat { message, history }
      ↓
 routes.py → gemini_service.py
-  1. Searches transcripts with LIKE query for relevant context
-  2. Falls back to all summaries if no keyword matches
-  3. Builds system prompt with context
-  4. Streams response from Gemini via SSE
+  1. Embeds user message via gemini-embedding-001 (768-dim)
+  2. KNN search on vec_chunks table via sqlite-vec → top 8 matching transcript chunks
+  3. Falls back to all summaries if no embeddings exist
+  4. Builds system prompt with retrieved context
+  5. Streams response from Gemini via SSE
      ↓
 Frontend reads SSE stream, displays tokens in real-time
 Conversation history maintained in React state (resets on reload)
+```
+
+### Embedding Flow
+```
+Transcript created (via transcription or import)
+     ↓ (auto-triggered in transcription_service.py background thread)
+embedding_service.py
+  1. chunk_transcript() — splits text into ~2000-char overlapping chunks
+  2. embed_texts() — calls Gemini gemini-embedding-001 (768-dim, batched)
+  3. Stores chunks in transcript_chunks table
+  4. Stores vectors in vec_chunks virtual table (sqlite-vec)
+     ↓
+Chunks immediately available for semantic search + chat RAG
+
+Manual bulk: POST /api/embeddings/build → embeds all unembedded transcripts
+```
+
+### Topic Clustering Flow
+```
+User clicks "Build Topics" on Topics page
+     ↓ POST /api/clusters/build
+clustering_service.py
+  1. Fetches all embeddings from vec_chunks, averages per video
+  2. Runs k-means (scikit-learn) with auto-determined k = sqrt(n_videos)
+  3. For each cluster, sends video titles/summaries to Gemini for label generation
+  4. Stores assignments in video_clusters, labels in cluster_labels
+     ↓
+Frontend Topics page shows grid of topic cards with thumbnail mosaics
+Click card → expands to show videos in that cluster
 ```
 
 ## Architecture
@@ -90,9 +121,9 @@ BookMarkManager/
 │   │   │   ├── AddVideoModal.jsx    # Modal for manually adding videos
 │   │   │   ├── TranscriptModal.jsx  # Modal for viewing transcript text
 │   │   │   ├── ChatDrawer.jsx       # Bottom drawer chat component (Gemini-powered)
-│   │   │   ├── Sidebar.jsx          # Left navigation sidebar (Videos, Settings, Profile)
-│   │   │   ├── SettingsPage.jsx     # Settings page (transcription provider, Gemini model, API status)
-│   │   │   └── ProfilePage.jsx      # Profile page (collection statistics)
+│   │   │   ├── Sidebar.jsx          # Left navigation sidebar (Videos, Topics, Settings)
+│   │   │   ├── SettingsPage.jsx     # Unified settings page (profile, model config, transcription provider, embeddings, API status)
+│   │   │   └── TopicsPage.jsx       # Topic clustering view (cluster cards, video lists)
 │   │   ├── services/
 │   │   │   └── api.js               # API service layer (all fetch calls + SSE streaming)
 │   │   └── App.jsx                  # Main app: sidebar layout, page switching, video list, transcription polling
@@ -100,13 +131,15 @@ BookMarkManager/
 ├── backend/                  # Python Flask API
 │   ├── app/
 │   │   ├── __init__.py              # Serves SPA from /app/static when present
-│   │   ├── routes.py                # API endpoints (videos, transcripts, jobs, chat, summaries, settings, stats)
+│   │   ├── routes.py                # API endpoints (videos, transcripts, jobs, chat, summaries, search, embeddings, clusters, settings, stats)
 │   │   ├── models.py                # SQLite models (Video, Transcript, Job, Setting)
-│   │   ├── database.py              # DB connection + schema init + migrations + settings table
+│   │   ├── database.py              # DB connection + schema init + migrations + settings table + sqlite-vec
 │   │   ├── bookmarks.py             # Chrome bookmarks parser
 │   │   ├── transcripts.py           # Transcript search + status helpers
-│   │   ├── transcription_service.py # yt-dlp download + AssemblyAI/Gemini transcription + background jobs
-│   │   └── gemini_service.py        # Google Gemini integration (summaries + chat streaming)
+│   │   ├── transcription_service.py # yt-dlp download + AssemblyAI/Gemini transcription + auto-embed
+│   │   ├── gemini_service.py        # Google Gemini integration (summaries + RAG chat streaming)
+│   │   ├── embedding_service.py     # Gemini embeddings: chunking, embedding, vector search via sqlite-vec
+│   │   └── clustering_service.py    # k-means topic clustering + Gemini cluster labeling
 │   ├── run.py
 │   └── requirements.txt
 ├── utils/                    # Utility scripts
@@ -121,6 +154,12 @@ BookMarkManager/
 ```
 
 ## API Endpoints
+
+### Health Endpoint
+
+#### GET /api/health
+Simple health check to verify the server is running.
+- Response: `{ "status": "ok", "message": "Server is running" }`
 
 ### Video Endpoints
 
@@ -199,7 +238,40 @@ Generate summaries for all transcripts that don't have one yet.
 Stream a chat response using Gemini with transcript context (SSE).
 - Body: `{ "message": "...", "history": [{ "role": "user"|"assistant", "content": "..." }] }`
 - Response: `text/event-stream` with `data: {"text": "..."}` chunks, ending with `data: {"done": true}`
-- Context: searches transcripts via LIKE query, falls back to summaries if no matches
+- Context: vector similarity search over transcript chunks (sqlite-vec KNN), falls back to summaries if no embeddings exist
+
+### Search Endpoints
+
+#### GET /api/search
+Semantic vector search across transcript chunks using Gemini embeddings + sqlite-vec.
+- Query params: `q` (search query, required), `k` (max results, default: 20, max: 50)
+- Response: `{ "success": true, "query": "...", "results": [{ "videoId", "videoTitle", "channelName", "matchingChunk", "distance" }] }`
+- Results are grouped by video (best-matching chunk per video)
+
+### Embedding Endpoints
+
+#### POST /api/embeddings/build
+Embed all transcripts that haven't been embedded yet. Chunks each transcript (~2000 chars with 200 char overlap), embeds via `gemini-embedding-001` (768-dim), stores in `transcript_chunks` + `vec_chunks` tables.
+- Response: `{ "success": true, "embedded": 5, "errors": [], "total": 5 }`
+
+#### GET /api/embeddings/status
+Get embedding statistics.
+- Response: `{ "success": true, "totalTranscripts": 42, "embeddedVideos": 30, "unembeddedVideos": 12, "totalChunks": 450 }`
+
+### Cluster Endpoints
+
+#### POST /api/clusters/build
+Run k-means topic clustering over all video embeddings, label clusters with Gemini.
+- Query params: `n` (optional, number of clusters; auto-determined if omitted)
+- Response: `{ "success": true, "clusters": [{ "clusterId", "label", "videoCount" }], "totalVideos": 30, "totalClusters": 5 }`
+
+#### GET /api/clusters
+Get all topic clusters with labels, video counts, and thumbnail video IDs.
+- Response: `{ "success": true, "clusters": [{ "clusterId", "label", "videoCount", "updatedAt", "thumbnailVideoIds": ["abc", "def"] }] }`
+
+#### GET /api/clusters/<cluster_id>/videos
+Get all videos in a specific cluster.
+- Response: `{ "success": true, "label": "...", "clusterId": 0, "videos": [{ ...video fields, hasTranscript, hasSummary }] }`
 
 ### Job Endpoints
 
@@ -228,7 +300,7 @@ Get all application settings and API key configuration status.
 #### PUT /api/settings
 Update application settings.
 - Body: `{ "transcription_provider": "gemini", "gemini_model": "gemini-2.5-flash" }` (any subset of keys)
-- Allowed keys: `transcription_provider` (assemblyai|gemini), `gemini_model` (gemini-2.5-flash|gemini-3-flash-preview|gemini-2.5-flash-lite)
+- Allowed keys: `transcription_provider` (assemblyai|gemini), `gemini_model` (gemini-2.5-flash|gemini-3-flash-preview|gemini-2.5-flash-lite), `profile_name` (free text, max 100 chars), `profile_subtitle` (free text, max 100 chars)
 - Response: `{ "success": true, "settings": { ... } }`
 
 ### Stats Endpoint
@@ -283,6 +355,38 @@ Get application statistics.
 Default settings seeded on init:
 - `transcription_provider` → `'assemblyai'`
 - `gemini_model` → from `GEMINI_MODEL` env var or `'gemini-2.5-flash'`
+- `profile_name` → `'BookMarkManager User'`
+- `profile_subtitle` → `'YouTube Bookmark Collection'`
+
+### transcript_chunks table
+| Column      | Type    | Description                            |
+|-------------|---------|----------------------------------------|
+| id          | INTEGER | Primary key, auto-increment            |
+| video_id    | TEXT    | Foreign key to videos                  |
+| chunk_index | INTEGER | Chunk position within the transcript   |
+| content     | TEXT    | Chunk text (~2000 chars)               |
+
+### vec_chunks virtual table (sqlite-vec)
+| Column    | Type             | Description                          |
+|-----------|------------------|--------------------------------------|
+| chunk_id  | INTEGER          | Primary key, references transcript_chunks.id |
+| embedding | float[768]       | 768-dim Gemini embedding vector      |
+
+KNN query pattern: `WHERE embedding MATCH ? AND k = ?`
+
+### video_clusters table
+| Column     | Type    | Description                           |
+|------------|---------|---------------------------------------|
+| video_id   | TEXT    | Primary key, foreign key to videos    |
+| cluster_id | INTEGER | Assigned cluster number               |
+
+### cluster_labels table
+| Column     | Type    | Description                           |
+|------------|---------|---------------------------------------|
+| cluster_id | INTEGER | Primary key                           |
+| label      | TEXT    | Gemini-generated topic label          |
+| video_count| INTEGER | Number of videos in this cluster      |
+| updated_at | TEXT    | Last update timestamp                 |
 
 ## Running the Application
 
@@ -380,30 +484,36 @@ environment:
 - [x] Conversation history maintained in React state
 - [x] Configurable Gemini model via GEMINI_MODEL env var
 - [x] Update gunicorn config for SSE threading support
-- [x] Add sidebar navigation (Videos, Settings, Profile pages)
+- [x] Add sidebar navigation (Videos, Settings)
 - [x] Add `settings` table + `Setting` model for persistent app configuration
 - [x] Add Gemini audio transcription as alternative provider (`transcribe_audio_gemini()`)
 - [x] Settings page: transcription provider selector, Gemini model dropdown, API key status
-- [x] Profile page with collection statistics (total videos, transcripts, summaries)
+- [x] Profile section merged into Settings page with editable name/subtitle and collection statistics
+- [x] Profile name and subtitle stored in database settings table
 - [x] Settings/stats API endpoints (GET/PUT /api/settings, GET /api/stats)
+- [x] Add `sqlite-vec` for vector search and `scikit-learn` for clustering
+- [x] Create `embedding_service.py` — transcript chunking, Gemini embedding (768-dim), sqlite-vec KNN search
+- [x] Create `transcript_chunks` + `vec_chunks` tables for vector storage
+- [x] Auto-embed transcripts after transcription completes (in background thread)
+- [x] Semantic search endpoint (`GET /api/search?q=...`) with vector similarity
+- [x] Upgrade chat RAG — replaced LIKE search with vector similarity in `chat_with_knowledge_base()`
+- [x] Embedding management endpoints (`POST /api/embeddings/build`, `GET /api/embeddings/status`)
+- [x] Create `clustering_service.py` — k-means over per-video mean embeddings + Gemini cluster labeling
+- [x] Cluster API endpoints (`POST /api/clusters/build`, `GET /api/clusters`, `GET /api/clusters/<id>/videos`)
+- [x] Search bar in videos page header (debounced semantic search with results view)
+- [x] Topics page with topic card grid, thumbnail mosaics, expandable video lists
+- [x] Topics nav item added to sidebar (between Videos and Settings)
+- [x] Embeddings status section in Settings page (embedded/pending/chunks stats + Build Embeddings button)
 
 ### Future Tasks
-
-#### Search & Indexing
-- [ ] Implement full-text search (FTS5) across transcripts
-- [ ] Add search bar in header
-- [ ] Add search results view with highlighting
-- [ ] Add filters: by channel, date range, has transcript
-
-#### RAG & Embeddings
-- [ ] Generate embeddings for transcripts
-- [ ] Store embeddings (ChromaDB, Pinecone, or SQLite-VSS)
-- [ ] Implement semantic search endpoint
-- [ ] Create RAG query endpoint: `POST /api/rag/query`
 
 #### Bulk Operations
 - [ ] Bulk "Transcribe All" button
 - [ ] Progress tracking for bulk operations
+
+#### Search Enhancements
+- [ ] Add filters: by channel, date range, has transcript
+- [ ] Search result highlighting within transcript chunks
 
 ## Development Notes
 
@@ -413,8 +523,8 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 **Sidebar** (`position: sticky`, not `fixed` — must stay in grid flow to avoid overlapping main content):
 - Always visible on desktop, hidden on mobile ≤900px (hamburger toggle)
 - Top: App brand/title with video icon
-- Middle: Videos nav item
-- Bottom (pinned via `margin-top: auto`): Settings, Profile
+- Middle: Videos, Topics nav items
+- Bottom (pinned via `margin-top: auto`): Settings
 - Active item highlighted with blue text + right border accent
 
 **Videos Page** — List view with 4 columns:
@@ -430,14 +540,17 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
   - Gray "None" + "Transcribe" button (no transcript yet)
 - **Actions**: Remove button
 
-**Settings Page**:
-- Transcription provider selector (AssemblyAI / Gemini Audio cards)
-- Gemini model dropdown
-- API key status indicators (green/red dots)
+**Settings Page** — scrollable sections (each a `.settings-section` card):
+1. **Profile**: Avatar + editable name/subtitle (click-to-edit inline) + stats counters (Videos, Transcripts, Summaries)
+2. **Model Configuration**: Gemini model dropdown
+3. **Transcription Provider**: AssemblyAI / Gemini Audio radio cards with API key status
+4. **Vector Embeddings**: Embedded/Pending/Chunks stats + "Build Embeddings" button
+5. **API Key Status**: Read-only status indicators (green/red dots)
 
-**Profile Page**:
-- User avatar placeholder
-- Collection statistics cards (Videos, Transcripts, Summaries)
+**Topics Page** — cluster-based topic grouping:
+- Header with "Build Topics" / "Rebuild Topics" button
+- Grid of topic cards (auto-fill, min 260px): thumbnail mosaic (top 4 videos) + label + video count
+- Click a card to expand → shows list of videos in that cluster with thumbnails, titles, transcript/summary badges
 
 **Chat Drawer**: Blue FAB (bottom-right) → expands to 420x500px chat panel with streaming responses
 
@@ -452,13 +565,32 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - **Job status polling** — frontend polls `GET /api/jobs/<id>` every 4 seconds via `setInterval`, cleaned up on component unmount
 
 ### Gemini Integration
-- **google-generativeai** Python SDK (`>=0.8.0`)
+- **google-generativeai** Python SDK (`>=0.8.0`) — note: this SDK is deprecated (EOL Nov 2025); migration to `google-genai` is a future task
 - **Model**: configurable via `GEMINI_MODEL` env var, defaults to `gemini-2.5-flash`
 - **Summaries**: reads transcript from DB → sends to Gemini with summarization prompt → stores result in `transcripts.summary` column
-- **Chat**: searches transcripts via LIKE query for context → falls back to all summaries → streams response via SSE (`text/event-stream`)
+- **Chat (RAG)**: embeds user message → KNN search over transcript chunks via sqlite-vec → falls back to summaries → streams response via SSE
+- **Embeddings**: `gemini-embedding-001` model, 768-dim output (`output_dimensionality=768`), batched via `genai.embed_content()`
+- **Cluster labeling**: sends video titles/summaries per cluster to Gemini for short topic label generation
 - **System instruction**: passed when constructing `GenerativeModel` instance (not in `generate_content()`)
 - **SSE streaming**: Flask `Response` with `stream_with_context` + `text/event-stream` mimetype; frontend reads via `ReadableStream`
 - **Gunicorn**: `--workers 2 --threads 4 --timeout 120` (gthread worker for SSE support)
+
+### Vector Search Architecture
+- **sqlite-vec** — loaded as SQLite extension on every `get_db()` connection via `sqlite_vec.load(db)`
+- **Chunking** — transcripts split into ~2000-char chunks with 200-char overlap, breaking at sentence boundaries
+- **Embedding** — each chunk embedded independently via `genai.embed_content()` with `gemini-embedding-001` (768-dim)
+- **Storage** — text in `transcript_chunks` table, vectors in `vec_chunks` virtual table (`vec0`)
+- **KNN query** — `WHERE embedding MATCH ? AND k = ?` with JOINs to get text + video metadata
+- **Auto-embed** — triggered in `transcription_service.py` background thread after transcript is stored (non-fatal if it fails)
+- **Bulk embed** — `POST /api/embeddings/build` processes all unembedded transcripts
+- **Cost** — Gemini embedding free tier: 1,500 req/day; each request can batch multiple texts
+
+### Topic Clustering
+- **scikit-learn** `KMeans` over per-video mean embedding vectors
+- **Auto k** — `min(max(3, sqrt(n_videos)), 15)` clusters
+- **Labels** — Gemini generates 2-5 word topic label per cluster from video titles/summaries
+- **Tables** — `video_clusters` (assignments) + `cluster_labels` (labels + counts)
+- **Rebuild** — `POST /api/clusters/build` clears old clusters and regenerates
 
 ### YouTube Thumbnail URL Pattern
 ```
@@ -476,9 +608,11 @@ https://img.youtube.com/vi/{videoId}/mqdefault.jpg
 ### Page Navigation
 - **No router library** — uses React state (`activePage`) to switch between pages
 - `App.jsx` renders `<Sidebar>` + `<main>` in a CSS Grid; sidebar calls `setActivePage` on click
-- Pages: `'videos'` (default), `'settings'`, `'profile'` — conditional rendering in `<main>`
+- Pages: `'videos'` (default), `'topics'`, `'settings'` — conditional rendering in `<main>`
+- Videos page includes debounced semantic search bar (400ms) — when active, replaces video list with search results
+- Topics page loads clusters on mount, supports build/rebuild and click-to-expand
 - Videos data stays in state when switching pages (no re-fetch on return)
-- Settings and Profile pages each fetch their own data on mount via `useEffect`
+- Settings page fetches settings, stats, and embedding status on mount via `Promise.all` in `useEffect`
 
 ### CSS Architecture Notes
 - **Sidebar must use `position: sticky`** (not `position: fixed`) — fixed positioning removes the element from CSS Grid flow, causing it to overlap the main content area

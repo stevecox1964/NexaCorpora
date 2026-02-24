@@ -105,6 +105,14 @@ def run_transcription_job(app, job_id, video_id, api_key, provider='assemblyai')
             Job.update_status(job_id, 'completed')
             logger.info(f'Transcription complete for {video_id}')
 
+            # Step 4: Auto-embed transcript chunks for vector search
+            try:
+                from .embedding_service import embed_video
+                count = embed_video(video_id)
+                logger.info(f'Auto-embedded {count} chunks for {video_id}')
+            except Exception as embed_err:
+                logger.warning(f'Auto-embed failed for {video_id} (non-fatal): {embed_err}')
+
         except Exception as e:
             logger.error(f'Transcription failed for {video_id}: {e}')
             Job.update_status(job_id, 'failed', str(e))

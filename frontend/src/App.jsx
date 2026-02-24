@@ -5,7 +5,7 @@ import AddVideoModal from './components/AddVideoModal';
 import TranscriptModal from './components/TranscriptModal';
 import ChatDrawer from './components/ChatDrawer';
 import SettingsPage from './components/SettingsPage';
-import ProfilePage from './components/ProfilePage';
+import TopicsPage from './components/TopicsPage';
 import { apiService } from './services/api';
 
 function App() {
@@ -25,6 +25,12 @@ function App() {
   });
   const [activePage, setActivePage] = useState('videos');
   const [summaryStates, setSummaryStates] = useState({});
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const searchTimer = useRef(null);
 
   // Track active polling intervals for transcription jobs
   const pollIntervals = useRef({});
@@ -244,6 +250,39 @@ function App() {
     }
   };
 
+  const handleSearchChange = (e) => {
+    const value = e.target.value;
+    setSearchQuery(value);
+
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+
+    if (!value.trim()) {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const data = await apiService.semanticSearch(value.trim());
+        setSearchResults(data.results || []);
+      } catch (err) {
+        setError(err.message);
+        setSearchResults(null);
+      } finally {
+        setSearching(false);
+      }
+    }, 400);
+  };
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    setSearchResults(null);
+    setSearching(false);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+  };
+
   return (
     <div className="app-layout">
       <Sidebar activePage={activePage} onNavigate={setActivePage} />
@@ -278,6 +317,32 @@ function App() {
               </div>
             </header>
 
+            {/* Search Bar */}
+            <div className="search-bar-container">
+              <div className="search-bar">
+                <svg className="search-bar-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  placeholder="Search transcripts semantically..."
+                  value={searchQuery}
+                  onChange={handleSearchChange}
+                  disabled={serverOffline}
+                />
+                {searchQuery && (
+                  <button className="search-bar-clear" onClick={clearSearch}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                )}
+                {searching && <div className="spinner search-spinner" />}
+              </div>
+            </div>
+
             {serverOffline && (
               <div className="error-banner">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -307,7 +372,52 @@ function App() {
               </div>
             )}
 
-            {loading ? (
+            {/* Search Results View */}
+            {searchResults !== null ? (
+              searchResults.length === 0 ? (
+                <div className="empty-state">
+                  <h2>No results found</h2>
+                  <p>Try a different search query or build embeddings in Settings first</p>
+                </div>
+              ) : (
+                <div className="search-results">
+                  <div className="search-results-header">
+                    {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} for "{searchQuery}"
+                  </div>
+                  {searchResults.map((result, idx) => (
+                    <div key={`${result.videoId}-${idx}`} className="search-result-card">
+                      <a
+                        className="search-result-thumbnail"
+                        href={`https://www.youtube.com/watch?v=${result.videoId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <img
+                          src={`https://img.youtube.com/vi/${result.videoId}/mqdefault.jpg`}
+                          alt={result.videoTitle}
+                        />
+                      </a>
+                      <div className="search-result-info">
+                        <a
+                          className="search-result-title"
+                          href={`https://www.youtube.com/watch?v=${result.videoId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {result.videoTitle}
+                        </a>
+                        <div className="search-result-channel">{result.channelName}</div>
+                        <div className="search-result-chunk">
+                          {result.matchingChunk.length > 300
+                            ? result.matchingChunk.slice(0, 300) + '...'
+                            : result.matchingChunk}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : loading ? (
               <div className="loading">Loading videos...</div>
             ) : videos.length === 0 && !serverOffline ? (
               <div className="empty-state">
@@ -374,8 +484,9 @@ function App() {
           </>
         )}
 
+        {activePage === 'topics' && <TopicsPage />}
+
         {activePage === 'settings' && <SettingsPage />}
-        {activePage === 'profile' && <ProfilePage />}
 
         {showAddModal && (
           <AddVideoModal

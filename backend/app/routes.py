@@ -366,19 +366,173 @@ def update_settings():
     if not data:
         return jsonify({'success': False, 'error': 'No data provided'}), 400
 
-    allowed_keys = {
+    validated_keys = {
         'transcription_provider': ['assemblyai', 'gemini'],
         'gemini_model': ['gemini-2.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash-lite']
     }
+    freetext_keys = {'profile_name', 'profile_subtitle'}
 
     for key, value in data.items():
-        if key not in allowed_keys:
+        if key in validated_keys:
+            if value not in validated_keys[key]:
+                return jsonify({'success': False, 'error': f'Invalid value for {key}: {value}'}), 400
+        elif key in freetext_keys:
+            if not isinstance(value, str) or len(value.strip()) == 0:
+                return jsonify({'success': False, 'error': f'{key} must be a non-empty string'}), 400
+            value = value.strip()[:100]
+        else:
             return jsonify({'success': False, 'error': f'Unknown setting: {key}'}), 400
-        if value not in allowed_keys[key]:
-            return jsonify({'success': False, 'error': f'Invalid value for {key}: {value}'}), 400
         Setting.set(key, value)
 
     return jsonify({'success': True, 'settings': Setting.get_all()})
+
+
+# Semantic search endpoints
+
+@bp.route('/search', methods=['GET'])
+def semantic_search():
+    """Semantic vector search across transcript chunks."""
+    query = request.args.get('q', '').strip()
+    k = request.args.get('k', 20, type=int)
+    k = min(max(k, 1), 50)
+
+    if not query:
+        return jsonify({'success': False, 'error': 'Search query is required'}), 400
+
+    try:
+        from .embedding_service import search_similar_grouped
+        results = search_similar_grouped(query, k=k)
+        return jsonify({
+            'success': True,
+            'query': query,
+            'results': [
+                {
+                    'videoId': r['video_id'],
+                    'videoTitle': r['video_title'],
+                    'channelName': r['channel_name'],
+                    'matchingChunk': r['content'],
+                    'distance': r['distance'],
+                }
+                for r in results
+            ],
+        })
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Search failed: {str(e)}'}), 500
+
+
+# Embedding endpoints
+
+@bp.route('/embeddings/build', methods=['POST'])
+def build_embeddings():
+    """Embed all transcripts that haven't been embedded yet."""
+    try:
+        from .embedding_service import embed_all_unembedded
+        result = embed_all_unembedded()
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Embedding build failed: {str(e)}'}), 500
+
+
+@bp.route('/embeddings/status', methods=['GET'])
+def embeddings_status():
+    """Get embedding statistics."""
+    try:
+        from .embedding_service import get_embedding_status
+        status = get_embedding_status()
+        return jsonify({'success': True, **status})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Cluster endpoints
+
+@bp.route('/clusters/build', methods=['POST'])
+def build_clusters():
+    """Run topic clustering over all video embeddings."""
+    n_clusters = request.args.get('n', None, type=int)
+    try:
+        from .clustering_service import build_clusters as do_build
+        result = do_build(n_clusters=n_clusters)
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Clustering failed: {str(e)}'}), 500
+
+
+@bp.route('/clusters', methods=['GET'])
+def get_clusters():
+    """Get all topic clusters with labels and video counts."""
+    from .database import get_db
+    db = get_db()
+    rows = db.execute('''
+        SELECT cl.cluster_id, cl.label, cl.video_count, cl.updated_at
+        FROM cluster_labels cl
+        ORDER BY cl.video_count DESC
+    ''').fetchall()
+
+    clusters = []
+    for row in rows:
+        # Grab up to 4 thumbnail video IDs for this cluster
+        vids = db.execute('''
+            SELECT vc.video_id
+            FROM video_clusters vc
+            JOIN videos v ON v.video_id = vc.video_id
+            WHERE vc.cluster_id = ?
+            LIMIT 4
+        ''', (row['cluster_id'],)).fetchall()
+
+        clusters.append({
+            'clusterId': row['cluster_id'],
+            'label': row['label'],
+            'videoCount': row['video_count'],
+            'updatedAt': row['updated_at'],
+            'thumbnailVideoIds': [v['video_id'] for v in vids],
+        })
+
+    return jsonify({'success': True, 'clusters': clusters})
+
+
+@bp.route('/clusters/<int:cluster_id>/videos', methods=['GET'])
+def get_cluster_videos(cluster_id):
+    """Get all videos in a specific cluster."""
+    from .database import get_db
+    db = get_db()
+
+    label_row = db.execute(
+        'SELECT label FROM cluster_labels WHERE cluster_id = ?', (cluster_id,)
+    ).fetchone()
+    if not label_row:
+        return jsonify({'success': False, 'error': 'Cluster not found'}), 404
+
+    rows = db.execute('''
+        SELECT v.*,
+               (t.id IS NOT NULL) AS has_transcript,
+               (t.summary IS NOT NULL AND t.summary != '') AS has_summary
+        FROM video_clusters vc
+        JOIN videos v ON v.video_id = vc.video_id
+        LEFT JOIN transcripts t ON v.video_id = t.video_id
+        WHERE vc.cluster_id = ?
+        ORDER BY v.scraped_at DESC
+    ''', (cluster_id,)).fetchall()
+
+    videos = []
+    for row in rows:
+        d = Video.row_to_dict(row)
+        d['hasTranscript'] = bool(row['has_transcript'])
+        d['hasSummary'] = bool(row['has_summary'])
+        videos.append(d)
+
+    return jsonify({
+        'success': True,
+        'label': label_row['label'],
+        'clusterId': cluster_id,
+        'videos': videos,
+    })
 
 
 # Stats endpoint
