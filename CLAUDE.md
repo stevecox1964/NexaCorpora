@@ -99,8 +99,8 @@ clustering_service.py
   3. For each cluster, sends video titles/summaries to Gemini for label generation
   4. Stores assignments in video_clusters, labels in cluster_labels
      ↓
-Frontend Topics page shows grid of topic cards with thumbnail mosaics
-Click card → expands to show videos in that cluster
+Frontend Topics page shows all topic groups as scrollable rows
+Each group displays its label, video count, and full video list with action buttons
 ```
 
 ## Architecture
@@ -504,6 +504,9 @@ environment:
 - [x] Topics page with topic card grid, thumbnail mosaics, expandable video lists
 - [x] Topics nav item added to sidebar (between Videos and Settings)
 - [x] Embeddings status section in Settings page (embedded/pending/chunks stats + Build Embeddings button)
+- [x] Topics page redesign — replaced card grid with scrollable topic groups, all videos always visible
+- [x] Functional transcript/summary actions in Topics view (View, Summarize, Summary toggle, Transcribe with polling)
+- [x] Removed unused ProfilePage.jsx (profile merged into Settings)
 
 ### Future Tasks
 
@@ -547,10 +550,11 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 4. **Vector Embeddings**: Embedded/Pending/Chunks stats + "Build Embeddings" button
 5. **API Key Status**: Read-only status indicators (green/red dots)
 
-**Topics Page** — cluster-based topic grouping:
+**Topics Page** — cluster-based topic grouping (all topics visible):
 - Header with "Build Topics" / "Rebuild Topics" button
-- Grid of topic cards (auto-fill, min 260px): thumbnail mosaic (top 4 videos) + label + video count
-- Click a card to expand → shows list of videos in that cluster with thumbnails, titles, transcript/summary badges
+- All topic groups displayed as scrollable rows — each group has a heading (label + video count) followed by its full video list
+- Each video row: thumbnail, title + channel, transcript actions (View, Summarize/Summary toggle, Transcribe with polling)
+- Self-contained: manages its own summary states, transcription polling, and TranscriptModal
 
 **Chat Drawer**: Blue FAB (bottom-right) → expands to 420x500px chat panel with streaming responses
 
@@ -610,7 +614,7 @@ https://img.youtube.com/vi/{videoId}/mqdefault.jpg
 - `App.jsx` renders `<Sidebar>` + `<main>` in a CSS Grid; sidebar calls `setActivePage` on click
 - Pages: `'videos'` (default), `'topics'`, `'settings'` — conditional rendering in `<main>`
 - Videos page includes debounced semantic search bar (400ms) — when active, replaces video list with search results
-- Topics page loads clusters on mount, supports build/rebuild and click-to-expand
+- Topics page loads all clusters and their videos on mount (parallel fetch), supports build/rebuild
 - Videos data stays in state when switching pages (no re-fetch on return)
 - Settings page fetches settings, stats, and embedding status on mount via `Promise.all` in `useEffect`
 

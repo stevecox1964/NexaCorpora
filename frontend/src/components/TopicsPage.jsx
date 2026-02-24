@@ -1,23 +1,39 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { apiService } from '../services/api';
+import TranscriptModal from './TranscriptModal';
 
 function TopicsPage() {
   const [clusters, setClusters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState(null);
-  const [selectedCluster, setSelectedCluster] = useState(null);
-  const [clusterVideos, setClusterVideos] = useState([]);
-  const [loadingVideos, setLoadingVideos] = useState(false);
+  const [summaryStates, setSummaryStates] = useState({});
+  const [transcriptView, setTranscriptView] = useState(null);
+  const [transcribingJobs, setTranscribingJobs] = useState({});
+  const pollIntervals = useRef({});
 
   useEffect(() => {
     loadClusters();
+    return () => {
+      Object.values(pollIntervals.current).forEach(clearInterval);
+    };
   }, []);
 
   const loadClusters = async () => {
     try {
       const data = await apiService.getClusters();
-      setClusters(data.clusters || []);
+      const clusterList = data.clusters || [];
+
+      if (clusterList.length > 0) {
+        const videoResults = await Promise.all(
+          clusterList.map(c => apiService.getClusterVideos(c.clusterId).catch(() => ({ videos: [] })))
+        );
+        clusterList.forEach((c, i) => {
+          c.videos = videoResults[i].videos || [];
+        });
+      }
+
+      setClusters(clusterList);
     } catch (err) {
       console.error('Failed to load clusters:', err);
     } finally {
@@ -29,10 +45,9 @@ function TopicsPage() {
     setBuilding(true);
     setError(null);
     try {
-      const data = await apiService.buildClusters();
-      setClusters(data.clusters || []);
-      setSelectedCluster(null);
-      setClusterVideos([]);
+      await apiService.buildClusters();
+      setLoading(true);
+      await loadClusters();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -40,25 +55,101 @@ function TopicsPage() {
     }
   };
 
-  const handleSelectCluster = async (cluster) => {
-    if (selectedCluster?.clusterId === cluster.clusterId) {
-      setSelectedCluster(null);
-      setClusterVideos([]);
+  // --- Transcription ---
+
+  const stopPolling = useCallback((videoId) => {
+    if (pollIntervals.current[videoId]) {
+      clearInterval(pollIntervals.current[videoId]);
+      delete pollIntervals.current[videoId];
+    }
+  }, []);
+
+  const updateVideoInClusters = useCallback((videoId, updates) => {
+    setClusters(prev => prev.map(c => ({
+      ...c,
+      videos: c.videos.map(v => v.videoId === videoId ? { ...v, ...updates } : v)
+    })));
+  }, []);
+
+  const handleTranscribe = async (videoId) => {
+    try {
+      const data = await apiService.startTranscription(videoId);
+      const jobId = data.job.id;
+
+      setTranscribingJobs(prev => ({ ...prev, [videoId]: { jobId, status: 'pending' } }));
+
+      const interval = setInterval(async () => {
+        try {
+          const statusData = await apiService.getJobStatus(jobId);
+          const job = statusData.job;
+
+          if (!job) {
+            stopPolling(videoId);
+            setTranscribingJobs(prev => { const n = { ...prev }; delete n[videoId]; return n; });
+            return;
+          }
+
+          setTranscribingJobs(prev => ({ ...prev, [videoId]: { jobId, status: job.status } }));
+
+          if (job.status === 'completed') {
+            stopPolling(videoId);
+            setTranscribingJobs(prev => { const n = { ...prev }; delete n[videoId]; return n; });
+            updateVideoInClusters(videoId, { hasTranscript: true });
+          } else if (job.status === 'failed') {
+            stopPolling(videoId);
+            setTranscribingJobs(prev => { const n = { ...prev }; delete n[videoId]; return n; });
+            setError(`Transcription failed: ${job.errorMessage || 'Unknown error'}`);
+          }
+        } catch (err) {
+          stopPolling(videoId);
+          setTranscribingJobs(prev => { const n = { ...prev }; delete n[videoId]; return n; });
+        }
+      }, 4000);
+
+      pollIntervals.current[videoId] = interval;
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // --- Summaries ---
+
+  const handleGenerateSummary = async (videoId) => {
+    setSummaryStates(prev => ({ ...prev, [videoId]: { loading: true } }));
+    try {
+      const data = await apiService.generateSummary(videoId);
+      const summary = data.transcript?.summary;
+      updateVideoInClusters(videoId, { hasSummary: true });
+      setSummaryStates(prev => ({ ...prev, [videoId]: { expanded: true, content: summary, loading: false } }));
+    } catch (err) {
+      setError(err.message);
+      setSummaryStates(prev => ({ ...prev, [videoId]: { loading: false } }));
+    }
+  };
+
+  const handleToggleSummary = async (videoId) => {
+    const current = summaryStates[videoId];
+
+    if (current?.expanded) {
+      setSummaryStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], expanded: false } }));
       return;
     }
 
-    setSelectedCluster(cluster);
-    setLoadingVideos(true);
-    try {
-      const data = await apiService.getClusterVideos(cluster.clusterId);
-      setClusterVideos(data.videos || []);
-    } catch (err) {
-      setError(err.message);
-      setClusterVideos([]);
-    } finally {
-      setLoadingVideos(false);
+    if (current?.content) {
+      setSummaryStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], expanded: true } }));
+    } else {
+      setSummaryStates(prev => ({ ...prev, [videoId]: { expanded: false, content: null, loading: true } }));
+      try {
+        const data = await apiService.getSummary(videoId);
+        setSummaryStates(prev => ({ ...prev, [videoId]: { expanded: true, content: data.summary, loading: false } }));
+      } catch (err) {
+        setError(err.message);
+        setSummaryStates(prev => ({ ...prev, [videoId]: { loading: false } }));
+      }
     }
   };
+
+  // --- Render ---
 
   if (loading) {
     return <div className="loading">Loading topics...</div>;
@@ -80,11 +171,7 @@ function TopicsPage() {
       {error && (
         <div className="error-banner">
           <span>{error}</span>
-          <button
-            className="btn btn-secondary"
-            onClick={() => setError(null)}
-            style={{ marginLeft: 'auto' }}
-          >
+          <button className="btn btn-secondary" onClick={() => setError(null)} style={{ marginLeft: 'auto' }}>
             Dismiss
           </button>
         </div>
@@ -103,48 +190,23 @@ function TopicsPage() {
           <p>Build embeddings in Settings, then click "Build Topics" to auto-cluster your videos by theme</p>
         </div>
       ) : (
-        <>
-          <div className="topics-grid">
-            {clusters.map(cluster => (
-              <div
-                key={cluster.clusterId}
-                className={`topic-card ${selectedCluster?.clusterId === cluster.clusterId ? 'selected' : ''}`}
-                onClick={() => handleSelectCluster(cluster)}
-              >
-                <div className="topic-card-thumbnails">
-                  {(cluster.thumbnailVideoIds || []).slice(0, 4).map(vid => (
-                    <img
-                      key={vid}
-                      src={`https://img.youtube.com/vi/${vid}/mqdefault.jpg`}
-                      alt=""
-                    />
-                  ))}
-                  {(!cluster.thumbnailVideoIds || cluster.thumbnailVideoIds.length === 0) && (
-                    <div className="topic-card-placeholder">
-                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="1.5">
-                        <rect x="2" y="3" width="20" height="14" rx="2" />
-                        <polygon points="10 8 16 12 10 16" fill="#555" stroke="none" />
-                      </svg>
-                    </div>
-                  )}
-                </div>
-                <div className="topic-card-info">
-                  <div className="topic-card-label">{cluster.label}</div>
-                  <div className="topic-card-count">{cluster.videoCount} video{cluster.videoCount !== 1 ? 's' : ''}</div>
-                </div>
-              </div>
-            ))}
-          </div>
+        clusters.map(cluster => (
+          <div key={cluster.clusterId} className="topic-group">
+            <div className="topic-group-header">
+              <h3>{cluster.label}</h3>
+              <span className="topic-group-count">
+                {cluster.videoCount} video{cluster.videoCount !== 1 ? 's' : ''}
+              </span>
+            </div>
 
-          {selectedCluster && (
-            <div className="topic-videos-section">
-              <h3>{selectedCluster.label}</h3>
-              {loadingVideos ? (
-                <div className="loading">Loading videos...</div>
-              ) : (
-                <div className="topic-videos-list">
-                  {clusterVideos.map(video => (
-                    <div key={video.videoId} className="topic-video-row">
+            <div className="topic-videos-list">
+              {(cluster.videos || []).map(video => {
+                const jobState = transcribingJobs[video.videoId];
+                const summaryState = summaryStates[video.videoId];
+
+                return (
+                  <React.Fragment key={video.videoId}>
+                    <div className="topic-video-row">
                       <a
                         className="topic-video-thumbnail"
                         href={`https://www.youtube.com/watch?v=${video.videoId}`}
@@ -167,21 +229,84 @@ function TopicsPage() {
                         </a>
                         <div className="topic-video-channel">{video.channelName}</div>
                       </div>
-                      <div className="topic-video-badges">
-                        {video.hasTranscript && (
-                          <span className="badge badge-green">Transcript</span>
-                        )}
-                        {video.hasSummary && (
-                          <span className="badge badge-blue">Summary</span>
+
+                      {/* Transcript Actions */}
+                      <div className="topic-video-actions">
+                        {video.hasTranscript ? (
+                          <div className="transcript-actions-group">
+                            <button
+                              className="status-indicator available clickable"
+                              onClick={() => setTranscriptView({ videoId: video.videoId, videoTitle: video.videoTitle })}
+                              title="View Transcript"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                              </svg>
+                              <span>View</span>
+                            </button>
+                            {video.hasSummary ? (
+                              <button
+                                className="btn btn-sm btn-secondary"
+                                onClick={() => handleToggleSummary(video.videoId)}
+                                title="Toggle Summary"
+                              >
+                                {summaryState?.expanded ? 'Hide' : 'Summary'}
+                              </button>
+                            ) : (
+                              <button
+                                className="btn btn-sm btn-secondary"
+                                onClick={() => handleGenerateSummary(video.videoId)}
+                                disabled={summaryState?.loading}
+                                title="Generate Summary"
+                              >
+                                {summaryState?.loading ? 'Summarizing...' : 'Summarize'}
+                              </button>
+                            )}
+                          </div>
+                        ) : jobState ? (
+                          <div className="status-indicator transcribing">
+                            <span className="spinner" />
+                            <span>
+                              {jobState.status === 'downloading' ? 'Downloading...' :
+                               jobState.status === 'transcribing' ? 'Transcribing...' :
+                               jobState.status === 'embedding' ? 'Embedding...' :
+                               'Starting...'}
+                            </span>
+                          </div>
+                        ) : (
+                          <button
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => handleTranscribe(video.videoId)}
+                            title="Transcribe Video"
+                          >
+                            Transcribe
+                          </button>
                         )}
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+
+                    {/* Expandable summary */}
+                    {summaryState?.expanded && summaryState?.content && (
+                      <div className="video-summary-row">
+                        <div className="video-summary-content">
+                          {summaryState.content}
+                        </div>
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </div>
-          )}
-        </>
+          </div>
+        ))
+      )}
+
+      {transcriptView && (
+        <TranscriptModal
+          videoId={transcriptView.videoId}
+          videoTitle={transcriptView.videoTitle}
+          onClose={() => setTranscriptView(null)}
+        />
       )}
     </div>
   );

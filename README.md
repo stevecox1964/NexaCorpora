@@ -1,17 +1,19 @@
 # BookMarkManager
 
-A self-hosted app for saving and managing YouTube video bookmarks with built-in transcription, AI-powered summaries, and a chat interface for querying your video knowledge base. Runs as a single Docker container — Flask serves both the REST API and the React frontend. Includes a Chrome extension for one-click saving from YouTube.
+A self-hosted app for saving and managing YouTube video bookmarks with built-in transcription, AI-powered summaries, semantic search, topic clustering, and a RAG-powered chat interface. Runs as a single Docker container — Flask serves both the REST API and the React frontend. Includes a Chrome extension for one-click saving from YouTube.
 
 ## Features
 
 - **Save YouTube videos** via the Chrome extension or the web UI
-- **Transcribe videos** using yt-dlp + AssemblyAI with real-time status polling
+- **Transcribe videos** using yt-dlp + AssemblyAI or Gemini Audio, with real-time status polling
 - **View transcripts** in-app with copy-to-clipboard support
 - **AI-powered summaries** — generate per-video summaries with Google Gemini, displayed inline as expandable rows
 - **Bulk summarize** — "Summarize All" button generates summaries for all transcribed videos at once
-- **Chat with your videos** — Gemini-powered chat drawer with SSE streaming; ask questions against your transcript knowledge base
-- **Search transcripts** with basic text search
+- **Semantic search** — vector similarity search across transcript chunks using Gemini embeddings + sqlite-vec
+- **Topic clustering** — auto-group videos by theme using k-means clustering with Gemini-generated topic labels
+- **Chat with your videos** — RAG-powered chat drawer with SSE streaming; ask questions and get answers grounded in your transcript knowledge base
 - **Import bookmarks** from Chrome or from JSON files
+- **Configurable settings** — choose transcription provider, Gemini model, manage embeddings, and customize your profile
 - **Paginated list view** with thumbnails, video info, transcript/summary status, and actions
 
 ## Quick Start
@@ -19,8 +21,8 @@ A self-hosted app for saving and managing YouTube video bookmarks with built-in 
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- An [AssemblyAI API key](https://www.assemblyai.com/) (for transcription)
-- A [Google AI API key](https://aistudio.google.com/apikey) (for summaries and chat)
+- An [AssemblyAI API key](https://www.assemblyai.com/) (for transcription via AssemblyAI)
+- A [Google AI API key](https://aistudio.google.com/apikey) (for summaries, chat, embeddings, clustering, and optional Gemini transcription)
 
 ### Run
 
@@ -66,9 +68,6 @@ docker compose logs -f app
 - **Toolbar**: Title + green/red API status dot
 - **Video strip**: Current YouTube video title + channel + Save button
 - **Main area**: Embedded iframe loading `http://localhost:5000` (the full BookMarkManager UI)
-- If Docker is offline, shows an offline message instead of the iframe
-
-**Permissions**: `activeTab`, `scripting`, `tabs` + host access to `youtube.com` and `localhost:5000`. No `storage`, `downloads`, or `notifications` used.
 
 ## Architecture
 
@@ -85,46 +84,55 @@ BookMarkManager/
 │   │   │   ├── VideoCard.jsx        # Video row with transcript/summary actions
 │   │   │   ├── AddVideoModal.jsx    # Manual video add modal
 │   │   │   ├── TranscriptModal.jsx  # Transcript viewer modal
-│   │   │   └── ChatDrawer.jsx       # Gemini-powered chat drawer
+│   │   │   ├── ChatDrawer.jsx       # RAG-powered chat drawer (Gemini + vector search)
+│   │   │   ├── Sidebar.jsx          # Left navigation (Videos, Topics, Settings)
+│   │   │   ├── SettingsPage.jsx     # Unified settings (profile, model, provider, embeddings, API status)
+│   │   │   └── TopicsPage.jsx       # Topic clustering view (all groups with videos visible)
 │   │   ├── services/
 │   │   │   └── api.js               # API service layer (fetch + SSE streaming)
-│   │   └── App.jsx                  # Main app: video list, pagination, polling
+│   │   └── App.jsx                  # Main app: sidebar layout, search, video list, polling
 │   └── package.json
-├── backend/                         # Flask API + SQLite
+├── backend/                         # Flask API + SQLite + sqlite-vec
 │   ├── app/
 │   │   ├── __init__.py              # Serves SPA from /app/static
 │   │   ├── routes.py                # API endpoints
-│   │   ├── models.py                # SQLite models (Video, Transcript, Job)
-│   │   ├── database.py              # DB connection + schema + migrations
+│   │   ├── models.py                # SQLite models (Video, Transcript, Job, Setting)
+│   │   ├── database.py              # DB connection + schema + sqlite-vec extension
+│   │   ├── gemini_service.py        # Gemini integration (summaries + RAG chat)
+│   │   ├── embedding_service.py     # Gemini embeddings + sqlite-vec vector search
+│   │   ├── clustering_service.py    # k-means topic clustering + Gemini labeling
+│   │   ├── transcription_service.py # yt-dlp + AssemblyAI/Gemini transcription
 │   │   ├── bookmarks.py             # Chrome bookmarks parser
-│   │   ├── transcripts.py           # Transcript search + status helpers
-│   │   ├── transcription_service.py # yt-dlp + AssemblyAI background jobs
-│   │   └── gemini_service.py        # Gemini integration (summaries + chat)
+│   │   └── transcripts.py           # Transcript search + status helpers
 │   ├── run.py
 │   └── requirements.txt
-├── utils/                           # Utility scripts
-│   └── import_json_to_db.py
+├── utils/
+│   └── import_json_to_db.py         # JSON file importer
 ├── sql/                             # Schema and query references
 ├── .env.example
 ├── Dockerfile                       # Multi-stage: build frontend + install ffmpeg + run backend
 └── docker-compose.yaml              # Single service, port 5000
 ```
 
-**Stack:** React 18, Vite, Flask, SQLite, Gunicorn, yt-dlp, AssemblyAI, Google Gemini, Docker
+**Stack:** React 18, Vite, Flask, SQLite, sqlite-vec, scikit-learn, Gunicorn, yt-dlp, AssemblyAI, Google Gemini, Docker
 
 ### How It Works
 
 - **Frontend** is built at Docker image build time and served as static files by Flask
 - **Backend** exposes a REST API under `/api/*` and serves the SPA for all other routes
-- **Transcription** runs in a background thread: yt-dlp downloads audio, AssemblyAI transcribes it, and the frontend polls for status updates
-- **Summarization** reads transcripts from the DB, sends them to Gemini, and stores the generated summary back in the transcripts table
-- **Chat** searches transcripts via LIKE query for relevant context (falls back to summaries), then streams a Gemini response via SSE
+- **Transcription** runs in a background thread: yt-dlp downloads audio, AssemblyAI or Gemini transcribes it, and the frontend polls for status updates. Transcripts are auto-embedded for vector search after completion.
+- **Embeddings** use Gemini's `gemini-embedding-001` model (768-dim) to embed transcript chunks into a sqlite-vec virtual table for KNN similarity search
+- **Semantic search** embeds the query via Gemini, runs KNN against the vector store, and returns the best-matching transcript chunks grouped by video
+- **Topic clustering** computes per-video mean embeddings, runs k-means via scikit-learn, and has Gemini generate human-readable topic labels
+- **Summarization** reads transcripts from the DB, sends them to Gemini, and stores the result
+- **Chat (RAG)** retrieves the top-k matching transcript chunks via vector search (falls back to summaries), passes them as context to Gemini, and streams the response via SSE
 - **Data** is persisted in a SQLite database on a Docker volume (`backend/data/`)
 
 ## API
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| `GET` | `/api/health` | Health check |
 | `GET` | `/api/videos` | List videos (paginated) |
 | `POST` | `/api/videos` | Add a video |
 | `GET` | `/api/videos/<id>` | Get a video |
@@ -134,11 +142,20 @@ BookMarkManager/
 | `GET` | `/api/jobs/video/<video_id>` | Get active job for a video |
 | `GET` | `/api/transcripts/<id>` | Get transcript text |
 | `GET` | `/api/transcripts/<id>/status` | Check transcript status |
-| `GET` | `/api/transcripts/search?q=` | Search transcripts |
+| `GET` | `/api/transcripts/search?q=` | Search transcripts (text) |
 | `POST` | `/api/summaries/<id>` | Generate summary via Gemini |
 | `GET` | `/api/summaries/<id>` | Get stored summary |
 | `POST` | `/api/summaries/bulk` | Summarize all un-summarized transcripts |
-| `POST` | `/api/chat` | Stream chat response (SSE) |
+| `POST` | `/api/chat` | Stream chat response (SSE, RAG) |
+| `GET` | `/api/search?q=` | Semantic vector search |
+| `POST` | `/api/embeddings/build` | Embed all unembedded transcripts |
+| `GET` | `/api/embeddings/status` | Get embedding statistics |
+| `POST` | `/api/clusters/build` | Build topic clusters (k-means + Gemini labels) |
+| `GET` | `/api/clusters` | List topic clusters |
+| `GET` | `/api/clusters/<id>/videos` | Get videos in a cluster |
+| `GET` | `/api/settings` | Get app settings + API key status |
+| `PUT` | `/api/settings` | Update settings |
+| `GET` | `/api/stats` | Get collection statistics |
 | `GET` | `/api/bookmarks/chrome` | List Chrome YouTube bookmarks |
 | `POST` | `/api/bookmarks/chrome/import` | Import Chrome bookmarks |
 
@@ -168,6 +185,22 @@ BookMarkManager/
 | summary | TEXT | Gemini-generated summary |
 | indexed_at | TEXT | Indexing timestamp |
 
+### transcript_chunks
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Primary key |
+| video_id | TEXT | Foreign key to videos |
+| chunk_index | INTEGER | Chunk position within transcript |
+| content | TEXT | Chunk text (~2000 chars) |
+
+### vec_chunks (sqlite-vec virtual table)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| chunk_id | INTEGER | References transcript_chunks.id |
+| embedding | float[768] | 768-dim Gemini embedding vector |
+
 ### jobs
 
 | Column | Type | Description |
@@ -180,12 +213,24 @@ BookMarkManager/
 | created_at | TEXT | Job creation timestamp |
 | completed_at | TEXT | Job completion timestamp |
 
+### settings
+
+| Column | Type | Description |
+|--------|------|-------------|
+| key | TEXT | Primary key (setting name) |
+| value | TEXT | Setting value |
+| updated_at | TEXT | Last update timestamp |
+
+### video_clusters / cluster_labels
+
+Topic clustering tables — `video_clusters` maps videos to cluster IDs, `cluster_labels` stores Gemini-generated topic labels with video counts.
+
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ASSEMBLYAI_API_KEY` | For transcription | Your AssemblyAI API key |
-| `GOOGLE_API_KEY` | For summaries + chat | Your Google AI API key |
+| `GOOGLE_API_KEY` | For summaries, chat, embeddings, clustering | Your Google AI API key |
 | `GEMINI_MODEL` | No (default: `gemini-2.5-flash`) | Gemini model to use |
 
 Available Gemini model options:
