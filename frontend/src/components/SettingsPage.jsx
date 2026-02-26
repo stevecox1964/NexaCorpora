@@ -11,6 +11,7 @@ function SettingsPage() {
   const [editValue, setEditValue] = useState('');
   const [embeddingStatus, setEmbeddingStatus] = useState(null);
   const [buildingEmbeddings, setBuildingEmbeddings] = useState(false);
+  const [rebuildingEmbeddings, setRebuildingEmbeddings] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -45,6 +46,21 @@ function SettingsPage() {
       alert(`Embedding failed: ${err.message}`);
     } finally {
       setBuildingEmbeddings(false);
+    }
+  };
+
+  const handleRebuildEmbeddings = async () => {
+    if (!confirm('This will clear all existing embeddings and re-embed every transcript. Continue?')) return;
+    setRebuildingEmbeddings(true);
+    try {
+      const result = await apiService.rebuildEmbeddings();
+      alert(`Rebuilt embeddings for ${result.embedded} video${result.embedded !== 1 ? 's' : ''}.${result.errors?.length ? ` ${result.errors.length} error(s).` : ''}`);
+      const embData = await apiService.getEmbeddingStatus().catch(() => null);
+      if (embData) setEmbeddingStatus(embData);
+    } catch (err) {
+      alert(`Rebuild failed: ${err.message}`);
+    } finally {
+      setRebuildingEmbeddings(false);
     }
   };
 
@@ -257,17 +273,25 @@ function SettingsPage() {
             </div>
           </div>
         )}
-        <button
-          className="btn btn-primary"
-          onClick={handleBuildEmbeddings}
-          disabled={buildingEmbeddings || (embeddingStatus && embeddingStatus.unembeddedVideos === 0)}
-          style={{ marginTop: '12px' }}
-        >
-          {buildingEmbeddings ? 'Building...' : embeddingStatus && embeddingStatus.unembeddedVideos === 0 ? 'All Embedded' : 'Build Embeddings'}
-        </button>
-        {buildingEmbeddings && (
+        <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+          <button
+            className="btn btn-primary"
+            onClick={handleBuildEmbeddings}
+            disabled={buildingEmbeddings || rebuildingEmbeddings || (embeddingStatus && embeddingStatus.unembeddedVideos === 0)}
+          >
+            {buildingEmbeddings ? 'Building...' : embeddingStatus && embeddingStatus.unembeddedVideos === 0 ? 'All Embedded' : 'Build Embeddings'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={handleRebuildEmbeddings}
+            disabled={buildingEmbeddings || rebuildingEmbeddings || !embeddingStatus || embeddingStatus.totalChunks === 0}
+          >
+            {rebuildingEmbeddings ? 'Rebuilding...' : 'Rebuild All'}
+          </button>
+        </div>
+        {(buildingEmbeddings || rebuildingEmbeddings) && (
           <div className="embedding-building-hint">
-            <div className="spinner" /> Generating embeddings via Gemini...
+            <div className="spinner" /> {rebuildingEmbeddings ? 'Rebuilding all embeddings via Gemini...' : 'Generating embeddings via Gemini...'}
           </div>
         )}
       </div>

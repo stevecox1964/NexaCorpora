@@ -18,11 +18,13 @@ def get_gemini_model(system_instruction=None):
     return genai.GenerativeModel(model_name)
 
 
-def generate_summary(video_id):
+def generate_summary(video_id, summary_type='structured'):
     """Generate a summary for a video's transcript using Gemini.
 
     Reads the transcript from the database (no re-downloading),
     sends it to Gemini, and stores the result.
+
+    summary_type: 'structured' for FAQ-style extraction, 'narrative' for prose summary.
     """
     transcript = Transcript.get_by_video_id(video_id)
     if not transcript:
@@ -35,12 +37,55 @@ def generate_summary(video_id):
 
     model = get_gemini_model()
 
-    prompt = (
-        "Summarize the following YouTube video transcript in 2-4 concise paragraphs. "
-        "Include the key topics, main arguments, and any notable conclusions.\n\n"
-        f"Video Title: {video_title}\n\n"
-        f"Transcript:\n{transcript['content']}"
-    )
+    if summary_type == 'narrative':
+        prompt = (
+            "Summarize the following YouTube video transcript in 2-4 concise paragraphs. "
+            "Include the key topics, main arguments, and any notable conclusions.\n\n"
+            f"Video Title: {video_title}\n\n"
+            f"Transcript:\n{transcript['content']}"
+        )
+    else:
+        prompt = (
+            "You are a technical documentation generator. "
+            "Analyze the transcript and extract structured FAQ-style technical information.\n"
+            "Return the response in this format:\n\n"
+            "## Project Overview\n"
+            "- Name:\n"
+            "- Purpose:\n"
+            "- Target Users:\n\n"
+            "## Tech Stack\n"
+            "- Operating System:\n"
+            "- Programming Languages:\n"
+            "- Backend Framework:\n"
+            "- Frontend Framework:\n"
+            "- UI Library:\n"
+            "- Database:\n"
+            "- APIs Used:\n"
+            "- AI Models Used:\n"
+            "- Cloud Provider:\n"
+            "- Deployment Platform:\n\n"
+            "## Architecture\n"
+            "- Pattern Used:\n"
+            "- Infrastructure:\n"
+            "- Authentication:\n"
+            "- Data Storage Strategy:\n\n"
+            "## DevOps\n"
+            "- CI/CD:\n"
+            "- Containerization:\n"
+            "- Environment Variables Mentioned:\n\n"
+            "## Features\n"
+            "- Core Features:\n"
+            "- Integrations:\n"
+            "- Security Features:\n\n"
+            "## Monetization\n"
+            "- Pricing Model:\n"
+            "- Subscription / Credits / Pay-per-use:\n\n"
+            "## Known Issues / Limitations\n\n"
+            "If a category is not mentioned, state \"Not specified.\"\n"
+            "Do not summarize the transcript narratively. Only extract structured facts.\n\n"
+            f"Video Title: {video_title}\n\n"
+            f"Transcript:\n{transcript['content']}"
+        )
 
     response = model.generate_content(prompt)
     summary_text = response.text

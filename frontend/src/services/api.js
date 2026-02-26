@@ -150,9 +150,11 @@ class ApiService {
   }
 
   // Generate summary for a single video
-  async generateSummary(videoId) {
+  async generateSummary(videoId, summaryType = 'structured') {
     const response = await fetch(`${API_BASE}/summaries/${videoId}`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summaryType }),
     });
     if (!response.ok) {
       const data = await response.json();
@@ -234,6 +236,18 @@ class ApiService {
     if (!response.ok) {
       const data = await response.json();
       throw new Error(data.error || 'Failed to build embeddings');
+    }
+    return response.json();
+  }
+
+  // Rebuild all embeddings (clear and re-embed)
+  async rebuildEmbeddings() {
+    const response = await fetch(`${API_BASE}/embeddings/rebuild`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to rebuild embeddings');
     }
     return response.json();
   }

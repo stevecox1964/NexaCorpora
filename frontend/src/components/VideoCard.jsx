@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 function VideoCard({ video, onDelete, onTranscribe, onViewTranscript, onGenerateSummary, onToggleSummary, summaryState }) {
   const thumbnailUrl = `https://img.youtube.com/vi/${video.videoId}/mqdefault.jpg`;
+  const [showSummaryMenu, setShowSummaryMenu] = useState(false);
+  const menuRef = useRef(null);
 
   const formatDate = (dateString) => {
     if (!dateString) return 'Unknown date';
@@ -13,9 +15,26 @@ function VideoCard({ video, onDelete, onTranscribe, onViewTranscript, onGenerate
     });
   };
 
+  // Close menu on outside click
+  useEffect(() => {
+    if (!showSummaryMenu) return;
+    const handleClick = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setShowSummaryMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showSummaryMenu]);
+
   const hasTranscript = video.hasTranscript || false;
   const hasSummary = video.hasSummary || false;
   const transcriptJobStatus = video.transcriptJobStatus || null;
+
+  const handleSummarize = (type) => {
+    setShowSummaryMenu(false);
+    onGenerateSummary && onGenerateSummary(video.videoId, type);
+  };
 
   return (
     <>
@@ -65,22 +84,51 @@ function VideoCard({ video, onDelete, onTranscribe, onViewTranscript, onGenerate
                 <span>View</span>
               </button>
               {hasSummary ? (
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={() => onToggleSummary && onToggleSummary(video.videoId)}
-                  title="Toggle Summary"
-                >
-                  {summaryState?.expanded ? 'Hide' : 'Summary'}
-                </button>
+                <>
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => onToggleSummary && onToggleSummary(video.videoId)}
+                    title="Toggle Summary"
+                  >
+                    {summaryState?.expanded ? 'Hide' : 'Summary'}
+                  </button>
+                  <div className="summary-menu-wrapper" ref={menuRef}>
+                    <button
+                      className="btn btn-sm btn-icon"
+                      onClick={() => setShowSummaryMenu(!showSummaryMenu)}
+                      disabled={summaryState?.loading}
+                      title="Re-summarize"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="23 4 23 10 17 10" />
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                      </svg>
+                    </button>
+                    {showSummaryMenu && (
+                      <div className="summary-type-menu">
+                        <button onClick={() => handleSummarize('structured')}>Structured</button>
+                        <button onClick={() => handleSummarize('narrative')}>Narrative</button>
+                      </div>
+                    )}
+                  </div>
+                </>
               ) : (
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={() => onGenerateSummary && onGenerateSummary(video.videoId)}
-                  disabled={summaryState?.loading}
-                  title="Generate Summary"
-                >
-                  {summaryState?.loading ? 'Summarizing...' : 'Summarize'}
-                </button>
+                <div className="summary-menu-wrapper" ref={menuRef}>
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => setShowSummaryMenu(!showSummaryMenu)}
+                    disabled={summaryState?.loading}
+                    title="Generate Summary"
+                  >
+                    {summaryState?.loading ? 'Summarizing...' : 'Summarize'}
+                  </button>
+                  {showSummaryMenu && !summaryState?.loading && (
+                    <div className="summary-type-menu">
+                      <button onClick={() => handleSummarize('structured')}>Structured</button>
+                      <button onClick={() => handleSummarize('narrative')}>Narrative</button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           ) : transcriptJobStatus ? (

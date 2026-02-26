@@ -273,10 +273,16 @@ def chat():
 
 @bp.route('/summaries/<video_id>', methods=['POST'])
 def generate_summary(video_id):
-    """Generate a summary for a video's transcript using Gemini."""
+    """Generate a summary for a video's transcript using Gemini.
+    Accepts optional JSON body: { "summaryType": "structured" | "narrative" }
+    """
     try:
         from .gemini_service import generate_summary as gen_summary
-        result, error = gen_summary(video_id)
+        data = request.get_json(silent=True) or {}
+        summary_type = data.get('summaryType', 'structured')
+        if summary_type not in ('structured', 'narrative'):
+            summary_type = 'structured'
+        result, error = gen_summary(video_id, summary_type=summary_type)
         if error:
             return jsonify({'success': False, 'error': error}), 400
         return jsonify({'success': True, 'transcript': result})
@@ -435,6 +441,19 @@ def build_embeddings():
         return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
         return jsonify({'success': False, 'error': f'Embedding build failed: {str(e)}'}), 500
+
+
+@bp.route('/embeddings/rebuild', methods=['POST'])
+def rebuild_embeddings():
+    """Clear all embeddings and re-embed every transcript."""
+    try:
+        from .embedding_service import rebuild_all_embeddings
+        result = rebuild_all_embeddings()
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Embedding rebuild failed: {str(e)}'}), 500
 
 
 @bp.route('/embeddings/status', methods=['GET'])

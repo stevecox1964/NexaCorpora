@@ -45,16 +45,18 @@ User clicks "View" → TranscriptModal fetches GET /api/transcripts/<video_id>
 
 ### Summarization Flow
 ```
-User clicks "Summarize" button on a video row (or "Summarize All" in header)
-     ↓ POST /api/summaries/<video_id>
+User clicks "Summarize" button on a video row → dropdown: "Structured" or "Narrative"
+     ↓ POST /api/summaries/<video_id> { summaryType: "structured" | "narrative" }
 routes.py → gemini_service.py
-  [reads transcript from DB, sends to Gemini]
+  [reads transcript from DB, sends to Gemini with selected prompt]
      ↓
-Gemini generates 2-4 paragraph summary
+  Structured: FAQ-style tech extraction (Project Overview, Tech Stack, Architecture, etc.)
+  Narrative: 2-4 paragraph prose summary
      ↓
-Summary stored in transcripts.summary column
+Summary stored in transcripts.summary column (overwrites previous)
      ↓
 Frontend shows expandable summary inline on the video row
+Re-summarize: refresh icon next to existing summary → pick type → regenerates
 ```
 
 ### Chat Flow (RAG with Vector Search)
@@ -220,8 +222,11 @@ Start a background transcription job. Uses the provider configured in the settin
 ### Summary Endpoints
 
 #### POST /api/summaries/<video_id>
-Generate a summary for a video's transcript using Gemini.
-- Reads existing transcript from DB, sends to Gemini, stores result in `transcripts.summary` column.
+Generate (or regenerate) a summary for a video's transcript using Gemini.
+- Body (optional): `{ "summaryType": "structured" | "narrative" }` (default: `"structured"`)
+  - `structured`: FAQ-style technical extraction (Project Overview, Tech Stack, Architecture, DevOps, Features, Monetization, Known Issues)
+  - `narrative`: 2-4 paragraph prose summary
+- Overwrites any existing summary (supports re-summarization).
 - Response: `{ "success": true, "transcript": { "videoId", "content", "summary", "indexedAt" } }`
 
 #### GET /api/summaries/<video_id>
@@ -252,6 +257,11 @@ Semantic vector search across transcript chunks using Gemini embeddings + sqlite
 
 #### POST /api/embeddings/build
 Embed all transcripts that haven't been embedded yet. Chunks each transcript (~2000 chars with 200 char overlap), embeds via `gemini-embedding-001` (768-dim), stores in `transcript_chunks` + `vec_chunks` tables.
+- Response: `{ "success": true, "embedded": 5, "errors": [], "total": 5 }`
+
+#### POST /api/embeddings/rebuild
+Clear all existing embeddings and re-embed every transcript from scratch. Useful after adding new videos or when embeddings need refreshing.
+- Deletes all rows from `vec_chunks` and `transcript_chunks`, then re-embeds all transcripts.
 - Response: `{ "success": true, "embedded": 5, "errors": [], "total": 5 }`
 
 #### GET /api/embeddings/status
@@ -497,7 +507,7 @@ environment:
 - [x] Auto-embed transcripts after transcription completes (in background thread)
 - [x] Semantic search endpoint (`GET /api/search?q=...`) with vector similarity
 - [x] Upgrade chat RAG — replaced LIKE search with vector similarity in `chat_with_knowledge_base()`
-- [x] Embedding management endpoints (`POST /api/embeddings/build`, `GET /api/embeddings/status`)
+- [x] Embedding management endpoints (`POST /api/embeddings/build`, `POST /api/embeddings/rebuild`, `GET /api/embeddings/status`)
 - [x] Create `clustering_service.py` — k-means over per-video mean embeddings + Gemini cluster labeling
 - [x] Cluster API endpoints (`POST /api/clusters/build`, `GET /api/clusters`, `GET /api/clusters/<id>/videos`)
 - [x] Search bar in videos page header (debounced semantic search with results view)
@@ -507,6 +517,10 @@ environment:
 - [x] Topics page redesign — replaced card grid with scrollable topic groups, all videos always visible
 - [x] Functional transcript/summary actions in Topics view (View, Summarize, Summary toggle, Transcribe with polling)
 - [x] Removed unused ProfilePage.jsx (profile merged into Settings)
+- [x] Rebuild all embeddings endpoint (`POST /api/embeddings/rebuild`) + "Rebuild All" button in Settings
+- [x] Structured summarization prompt (FAQ-style tech extraction: Project Overview, Tech Stack, Architecture, etc.)
+- [x] Summary type selection — "Structured" vs "Narrative" dropdown on Summarize button
+- [x] Re-summarize capability — refresh icon on existing summaries to regenerate with type choice
 
 ### Future Tasks
 
@@ -538,7 +552,8 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - **Transcript**: Status indicator + action
   - Green "View" button (clickable) → opens TranscriptModal
   - "Summary" / "Hide" toggle button (when summary exists) → expands inline summary
-  - "Summarize" button (when transcript exists but no summary) → generates via Gemini
+  - Refresh icon button (when summary exists) → dropdown to re-summarize as "Structured" or "Narrative"
+  - "Summarize" button (when transcript exists but no summary) → dropdown: "Structured" or "Narrative"
   - Yellow spinner + "Downloading..." / "Transcribing..." (during active job)
   - Gray "None" + "Transcribe" button (no transcript yet)
 - **Actions**: Remove button
@@ -547,13 +562,13 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 1. **Profile**: Avatar + editable name/subtitle (click-to-edit inline) + stats counters (Videos, Transcripts, Summaries)
 2. **Model Configuration**: Gemini model dropdown
 3. **Transcription Provider**: AssemblyAI / Gemini Audio radio cards with API key status
-4. **Vector Embeddings**: Embedded/Pending/Chunks stats + "Build Embeddings" button
+4. **Vector Embeddings**: Embedded/Pending/Chunks stats + "Build Embeddings" button + "Rebuild All" button (clears and re-embeds)
 5. **API Key Status**: Read-only status indicators (green/red dots)
 
 **Topics Page** — cluster-based topic grouping (all topics visible):
 - Header with "Build Topics" / "Rebuild Topics" button
 - All topic groups displayed as scrollable rows — each group has a heading (label + video count) followed by its full video list
-- Each video row: thumbnail, title + channel, transcript actions (View, Summarize/Summary toggle, Transcribe with polling)
+- Each video row: thumbnail, title + channel, transcript actions (View, Summarize with type dropdown, Summary toggle + re-summarize, Transcribe with polling)
 - Self-contained: manages its own summary states, transcription polling, and TranscriptModal
 
 **Chat Drawer**: Blue FAB (bottom-right) → expands to 420x500px chat panel with streaming responses
@@ -571,7 +586,7 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 ### Gemini Integration
 - **google-generativeai** Python SDK (`>=0.8.0`) — note: this SDK is deprecated (EOL Nov 2025); migration to `google-genai` is a future task
 - **Model**: configurable via `GEMINI_MODEL` env var, defaults to `gemini-2.5-flash`
-- **Summaries**: reads transcript from DB → sends to Gemini with summarization prompt → stores result in `transcripts.summary` column
+- **Summaries**: reads transcript from DB → sends to Gemini with selected prompt type → stores result in `transcripts.summary` column. Two modes: `structured` (FAQ-style tech extraction) and `narrative` (2-4 paragraph prose). Supports re-summarization (overwrites previous summary).
 - **Chat (RAG)**: embeds user message → KNN search over transcript chunks via sqlite-vec → falls back to summaries → streams response via SSE
 - **Embeddings**: `gemini-embedding-001` model, 768-dim output (`output_dimensionality=768`), batched via `genai.embed_content()`
 - **Cluster labeling**: sends video titles/summaries per cluster to Gemini for short topic label generation

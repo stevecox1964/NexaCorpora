@@ -128,6 +128,37 @@ def embed_all_unembedded():
     return {'embedded': embedded, 'errors': errors, 'total': len(rows)}
 
 
+def rebuild_all_embeddings():
+    """Clear all existing embeddings and re-embed every transcript. Returns stats dict."""
+    db = get_db()
+
+    # Clear existing vector and chunk data
+    db.execute('DELETE FROM vec_chunks')
+    db.execute('DELETE FROM transcript_chunks')
+    db.commit()
+    logger.info('Cleared all existing embeddings')
+
+    # Fetch all transcripts with content
+    rows = db.execute('''
+        SELECT video_id FROM transcripts
+        WHERE content IS NOT NULL AND content != ''
+    ''').fetchall()
+
+    embedded = 0
+    errors = []
+    for row in rows:
+        vid = row['video_id']
+        try:
+            count = embed_video(vid)
+            if count > 0:
+                embedded += 1
+        except Exception as e:
+            logger.error(f'Failed to embed video {vid}: {e}')
+            errors.append({'videoId': vid, 'error': str(e)})
+
+    return {'embedded': embedded, 'errors': errors, 'total': len(rows)}
+
+
 def get_embedding_status():
     """Return embedding statistics."""
     db = get_db()

@@ -171,14 +171,14 @@ function App() {
     }
   };
 
-  const handleGenerateSummary = async (videoId) => {
+  const handleGenerateSummary = async (videoId, summaryType = 'structured') => {
     setSummaryStates(prev => ({
       ...prev,
       [videoId]: { ...prev[videoId], loading: true }
     }));
 
     try {
-      const data = await apiService.generateSummary(videoId);
+      const data = await apiService.generateSummary(videoId, summaryType);
       const summary = data.transcript?.summary;
 
       setVideos(prev => prev.map(v =>
