@@ -82,6 +82,17 @@ class ApiService {
     return response.json();
   }
 
+  async retranscribe(videoId) {
+    const response = await fetch(`${API_BASE}/retranscribe/${videoId}`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to start retranscription');
+    }
+    return response.json();
+  }
+
   async getJobStatus(jobId) {
     const response = await fetch(`${API_BASE}/jobs/${jobId}`);
     if (!response.ok) {

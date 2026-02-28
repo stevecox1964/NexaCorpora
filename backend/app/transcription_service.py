@@ -31,14 +31,34 @@ def download_audio(video_url, output_dir):
         return audio_path
 
 
+def format_ms_to_timestamp(ms):
+    """Convert milliseconds to a human-readable timestamp string."""
+    total_seconds = int(ms / 1000)
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    if hours > 0:
+        return f'{hours}:{minutes:02d}:{seconds:02d}'
+    return f'{minutes}:{seconds:02d}'
+
+
 def transcribe_audio(audio_file_path, api_key):
-    """Transcribe an audio file using the AssemblyAI SDK."""
+    """Transcribe an audio file using the AssemblyAI SDK.
+    Returns text with sentence-level timestamps in [M:SS] format."""
     aai.settings.api_key = api_key
     transcriber = aai.Transcriber()
     transcript = transcriber.transcribe(audio_file_path)
 
     if transcript.status == aai.TranscriptStatus.error:
         raise Exception(f'AssemblyAI error: {transcript.error}')
+
+    sentences = transcript.get_sentences()
+    if sentences:
+        lines = []
+        for sentence in sentences:
+            ts = format_ms_to_timestamp(sentence.start)
+            lines.append(f'[{ts}] {sentence.text}')
+        return '\n\n'.join(lines)
 
     return transcript.text
 
@@ -130,22 +150,26 @@ def run_transcription_job(app, job_id, video_id, api_key, provider='assemblyai')
                 pass
 
 
-def start_transcription(app, video_id, provider=None):
+def start_transcription(app, video_id, provider=None, force=False):
     """Validate and kick off a transcription job in a background thread.
     Returns (job_dict, error_string, http_status_code).
     If provider is None, reads from the settings table.
+    If force is True, deletes the existing transcript first (retranscribe).
     """
     video = Video.get_by_video_id(video_id)
     if not video:
         return None, 'Video not found', 404
 
-    existing_transcript = Transcript.get_by_video_id(video_id)
-    if existing_transcript:
-        return None, 'Transcript already exists', 409
-
     active_job = Job.get_active_by_video_id(video_id, 'transcribe')
     if active_job:
         return active_job, 'Transcription already in progress', 409
+
+    existing_transcript = Transcript.get_by_video_id(video_id)
+    if existing_transcript:
+        if force:
+            Transcript.delete(video_id)
+        else:
+            return None, 'Transcript already exists', 409
 
     if provider is None:
         provider = Setting.get('transcription_provider') or 'assemblyai'

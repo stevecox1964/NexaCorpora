@@ -214,6 +214,22 @@ def transcribe_video(video_id):
     return jsonify({'success': True, 'job': job}), 202
 
 
+@bp.route('/retranscribe/<video_id>', methods=['POST'])
+def retranscribe_video(video_id):
+    """Delete existing transcript and start a new transcription job."""
+    job, error, status_code = start_transcription(
+        current_app._get_current_object(), video_id, force=True
+    )
+
+    if error:
+        response = {'success': False, 'error': error}
+        if job:
+            response['job'] = job
+        return jsonify(response), status_code
+
+    return jsonify({'success': True, 'job': job}), 202
+
+
 # Job endpoints
 
 @bp.route('/jobs/<job_id>', methods=['GET'])

@@ -166,6 +166,20 @@ class Transcript:
         return Transcript.get_by_video_id(video_id)
 
     @staticmethod
+    def delete(video_id):
+        db = get_db()
+        # Delete embeddings first (vec_chunks references transcript_chunks)
+        chunk_ids = [row['id'] for row in db.execute(
+            'SELECT id FROM transcript_chunks WHERE video_id = ?', (video_id,)
+        ).fetchall()]
+        if chunk_ids:
+            placeholders = ','.join('?' * len(chunk_ids))
+            db.execute(f'DELETE FROM vec_chunks WHERE chunk_id IN ({placeholders})', chunk_ids)
+            db.execute('DELETE FROM transcript_chunks WHERE video_id = ?', (video_id,))
+        db.execute('DELETE FROM transcripts WHERE video_id = ?', (video_id,))
+        db.commit()
+
+    @staticmethod
     def get_all_summaries():
         db = get_db()
         cursor = db.execute('''

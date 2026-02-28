@@ -171,6 +171,57 @@ function App() {
     }
   };
 
+  const handleRetranscribe = async (videoId) => {
+    try {
+      const data = await apiService.retranscribe(videoId);
+      const jobId = data.job.id;
+
+      // Reset transcript/summary state in UI
+      setVideos(prev => prev.map(v =>
+        v.videoId === videoId ? { ...v, hasTranscript: false, hasSummary: false, transcriptJobStatus: 'pending' } : v
+      ));
+      setSummaryStates(prev => {
+        const next = { ...prev };
+        delete next[videoId];
+        return next;
+      });
+
+      // Poll for job status
+      const interval = setInterval(async () => {
+        try {
+          const statusData = await apiService.getJobStatus(jobId);
+          const job = statusData.job;
+
+          if (!job) {
+            stopPolling(videoId);
+            updateVideoJobStatus(videoId, null);
+            return;
+          }
+
+          updateVideoJobStatus(videoId, job.status);
+
+          if (job.status === 'completed') {
+            stopPolling(videoId);
+            markVideoTranscribed(videoId);
+          } else if (job.status === 'failed') {
+            stopPolling(videoId);
+            updateVideoJobStatus(videoId, null);
+            setError(`Retranscription failed: ${job.errorMessage || 'Unknown error'}`);
+          }
+        } catch (err) {
+          stopPolling(videoId);
+          updateVideoJobStatus(videoId, null);
+          setError(`Error polling retranscription status: ${err.message}`);
+        }
+      }, 4000);
+
+      pollIntervals.current[videoId] = interval;
+
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const handleGenerateSummary = async (videoId, summaryType = 'structured') => {
     setSummaryStates(prev => ({
       ...prev,
@@ -442,6 +493,7 @@ function App() {
                       video={video}
                       onDelete={handleDeleteVideo}
                       onTranscribe={handleTranscribe}
+                      onRetranscribe={handleRetranscribe}
                       onViewTranscript={(videoId, videoTitle) => setTranscriptView({ videoId, videoTitle })}
                       onGenerateSummary={handleGenerateSummary}
                       onToggleSummary={handleToggleSummary}
