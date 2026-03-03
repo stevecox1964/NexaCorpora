@@ -31,16 +31,19 @@ Frontend polls GET /api/jobs/<job_id> every 4 seconds
      ↓
 Background thread:
   1. yt-dlp downloads audio-only (MP3) to temp dir
-  2. Provider-specific transcription:
-     - AssemblyAI: SDK uploads audio + transcribes (blocking call)
-     - Gemini Audio: uploads via genai.upload_file() + generate_content() for transcription
-  3. Stores transcript text in SQLite transcripts table
+  2. Provider-specific transcription (both produce [M:SS] timestamps):
+     - AssemblyAI: SDK uploads audio + transcribes → get_sentences() for timestamps
+     - Gemini Audio: uploads via genai.upload_file() + generate_content() with timestamp prompt
+  3. Stores transcript text + provider name in SQLite transcripts table
   4. Updates job status → "completed"
   5. Auto-embeds transcript chunks for vector search (non-fatal if it fails)
   6. Cleans up temp files
      ↓
-Frontend sees "completed" → shows green "View" button
-User clicks "View" → TranscriptModal fetches GET /api/transcripts/<video_id>
+Frontend sees "completed" → shows green "View" button + provider badge (AAI/Gemini)
+User clicks "View" → TranscriptModal with embedded YouTube player + clickable timestamps
+
+Delete transcript: trash icon on video row → DELETE /api/transcripts/<video_id>
+  [deletes transcript + summary + embeddings (cascade), Transcribe button reappears]
 ```
 
 ### Summarization Flow
@@ -144,8 +147,7 @@ BookMarkManager/
 │   │   └── clustering_service.py    # k-means topic clustering + Gemini cluster labeling
 │   ├── run.py
 │   └── requirements.txt
-├── utils/                    # Utility scripts
-│   └── import_json_to_db.py  # JSON file importer
+├── utils/                    # Utility scripts (empty)
 ├── sql/                      # SQL scripts
 │   ├── schema.sql            # Database schema
 │   └── queries.sql           # Common SQL queries
@@ -167,7 +169,7 @@ Simple health check to verify the server is running.
 
 #### GET /api/videos
 Returns paginated list of YouTube video bookmarks (latest to oldest).
-Each video includes `hasTranscript` (boolean), `hasSummary` (boolean), and `transcriptJobStatus` (string or null) fields via LEFT JOINs.
+Each video includes `hasTranscript` (boolean), `hasSummary` (boolean), `transcriptProvider` (string or null), and `transcriptJobStatus` (string or null) fields via LEFT JOINs.
 - Query params: `page` (default: 1), `per_page` (default: 20, max: 100)
 - Response:
 ```json
@@ -181,6 +183,7 @@ Each video includes `hasTranscript` (boolean), `hasSummary` (boolean), and `tran
       "channelName": "...",
       "hasTranscript": true,
       "hasSummary": true,
+      "transcriptProvider": "assemblyai",
       "transcriptJobStatus": null
     }
   ],
@@ -202,7 +205,11 @@ Delete a video bookmark by videoId.
 
 #### GET /api/transcripts/<video_id>
 Get transcript content for a video.
-- Response: `{ "success": true, "transcript": { "videoId", "content", "summary", "indexedAt" } }`
+- Response: `{ "success": true, "transcript": { "videoId", "content", "summary", "provider", "indexedAt" } }`
+
+#### DELETE /api/transcripts/<video_id>
+Delete a transcript and its associated embeddings, chunks, and summary (cascade).
+- Response: `{ "success": true, "message": "Transcript deleted for <video_id>" }`
 
 #### GET /api/transcripts/<video_id>/status
 Check if a video has a transcript.
@@ -281,7 +288,7 @@ Get all topic clusters with labels, video counts, and thumbnail video IDs.
 
 #### GET /api/clusters/<cluster_id>/videos
 Get all videos in a specific cluster.
-- Response: `{ "success": true, "label": "...", "clusterId": 0, "videos": [{ ...video fields, hasTranscript, hasSummary }] }`
+- Response: `{ "success": true, "label": "...", "clusterId": 0, "videos": [{ ...video fields, hasTranscript, hasSummary, transcriptProvider }] }`
 
 ### Job Endpoints
 
@@ -342,6 +349,7 @@ Get application statistics.
 | video_id        | TEXT     | Foreign key to videos          |
 | content         | TEXT     | Full transcript text           |
 | summary         | TEXT     | Gemini-generated summary       |
+| provider        | TEXT     | Transcription provider used (assemblyai or gemini) |
 | indexed_at      | TEXT     | Indexing timestamp             |
 
 ### jobs table
@@ -521,6 +529,15 @@ environment:
 - [x] Structured summarization prompt (FAQ-style tech extraction: Project Overview, Tech Stack, Architecture, etc.)
 - [x] Summary type selection — "Structured" vs "Narrative" dropdown on Summarize button
 - [x] Re-summarize capability — refresh icon on existing summaries to regenerate with type choice
+- [x] AssemblyAI sentence-level timestamps (`[M:SS]` format) in transcript content
+- [x] Embedded YouTube player in TranscriptModal — clickable timestamps seek within player
+- [x] Retranscribe endpoint (`POST /api/retranscribe/<video_id>`) — deletes old transcript + re-transcribes
+- [x] Transcription provider tracking — `provider` column in transcripts table, stored on create
+- [x] Provider badges in UI — "AAI" (blue) / "Gemini" (purple) shown on video rows + TranscriptModal header
+- [x] Gemini audio timestamps — prompt updated to produce `[M:SS]` format matching AssemblyAI output
+- [x] Delete transcript — trash icon replaces retranscribe, `DELETE /api/transcripts/<video_id>` cascade deletes transcript + embeddings + summary
+- [x] Embedding warning in Settings — amber alert banner when unembedded transcripts exist, pending count highlighted
+- [x] Removed `utils/import_json_to_db.py` (no longer needed)
 
 ### Future Tasks
 
@@ -551,6 +568,8 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - **Video Info**: Title, Channel name, Saved date
 - **Transcript**: Status indicator + action
   - Green "View" button (clickable) → opens TranscriptModal
+  - Provider badge ("AAI" in blue or "Gemini" in purple) — shows which service transcribed
+  - Trash icon button → deletes transcript + summary + embeddings (confirmation prompt)
   - "Summary" / "Hide" toggle button (when summary exists) → expands inline summary
   - Refresh icon button (when summary exists) → dropdown to re-summarize as "Structured" or "Narrative"
   - "Summarize" button (when transcript exists but no summary) → dropdown: "Structured" or "Narrative"
@@ -562,22 +581,23 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 1. **Profile**: Avatar + editable name/subtitle (click-to-edit inline) + stats counters (Videos, Transcripts, Summaries)
 2. **Model Configuration**: Gemini model dropdown
 3. **Transcription Provider**: AssemblyAI / Gemini Audio radio cards with API key status
-4. **Vector Embeddings**: Embedded/Pending/Chunks stats + "Build Embeddings" button + "Rebuild All" button (clears and re-embeds)
+4. **Vector Embeddings**: Embedded/Pending/Chunks stats + "Build Embeddings" button + "Rebuild All" button (clears and re-embeds). Amber warning banner when unembedded transcripts exist.
 5. **API Key Status**: Read-only status indicators (green/red dots)
 
 **Topics Page** — cluster-based topic grouping (all topics visible):
 - Header with "Build Topics" / "Rebuild Topics" button
 - All topic groups displayed as scrollable rows — each group has a heading (label + video count) followed by its full video list
-- Each video row: thumbnail, title + channel, transcript actions (View, Summarize with type dropdown, Summary toggle + re-summarize, Transcribe with polling)
-- Self-contained: manages its own summary states, transcription polling, and TranscriptModal
+- Each video row: thumbnail, title + channel, transcript actions (View, provider badge, delete transcript, Summarize with type dropdown, Summary toggle + re-summarize, Transcribe with polling)
+- Self-contained: manages its own summary states, transcription polling, transcript deletion, and TranscriptModal
 
 **Chat Drawer**: Blue FAB (bottom-right) → expands to 420x500px chat panel with streaming responses
 
 ### Transcription Architecture
 - **No Celery/Redis** — uses Python `threading.Thread` for background jobs (sufficient for single-user Docker app)
 - **Provider selection** — reads `transcription_provider` from `settings` table (default: `assemblyai`), configurable via Settings page
-- **AssemblyAI SDK** (`assemblyai==0.17.0`) — `transcriber.transcribe()` is a blocking call that handles upload + polling internally
-- **Gemini Audio** — uses `google.generativeai` SDK: `genai.upload_file()` uploads audio to Gemini Files API, then `model.generate_content()` with transcription prompt
+- **AssemblyAI SDK** (`assemblyai==0.17.0`) — `transcriber.transcribe()` is a blocking call; `get_sentences()` provides sentence-level timestamps stored as `[M:SS] text` format
+- **Gemini Audio** — uses `google.generativeai` SDK: `genai.upload_file()` uploads audio, then `model.generate_content()` with timestamp prompt producing matching `[M:SS]` format
+- **Provider tracking** — `provider` column in transcripts table records which service was used; displayed as badge in UI
 - **Lazy imports** — `import google.generativeai as genai` is done inside `transcribe_audio_gemini()` (not at module top-level) to avoid FutureWarning deprecation messages on every gunicorn worker startup
 - **yt-dlp** — downloads audio-only (MP3, 192kbps) to temp directory, cleaned up after transcription (shared by both providers)
 - **ffmpeg** — installed in Docker image, required by yt-dlp for audio extraction
@@ -645,55 +665,6 @@ https://img.youtube.com/vi/{videoId}/mqdefault.jpg
 - Background threads use Flask app context for database access
 - Chat errors shown inline in the chat drawer
 - Missing `GOOGLE_API_KEY` returns clear error messages from summary/chat endpoints
-
-## Utility Scripts
-
-### JSON Import Utility (`utils/import_json_to_db.py`)
-
-Imports YouTube video JSON files from a directory structure into the SQLite database.
-
-#### Expected Directory Structure
-```
-source_directory/
-├── UCvBy3qcISSOcrbqPhqmG4Xw/     # Channel ID folder
-│   ├── video_title_videoId.json
-│   └── ...
-├── @channelHandle/               # Channel handle folder
-│   └── ...
-```
-
-#### JSON File Format
-```json
-{
-  "channelId": "UCvBy3qcISSOcrbqPhqmG4Xw",
-  "channelIdSource": "fetched_from_handle",
-  "channelName": "Damon Cassidy",
-  "channelUrl": "https://www.youtube.com/channel/UCvBy3qcISSOcrbqPhqmG4Xw",
-  "scrapedAt": "2025-12-10T16:38:41.404Z",
-  "videoId": "BTewrsVrZwM",
-  "videoTitle": "(104) Companies Are Making Billions Off FAKE Layoffs",
-  "videoUrl": "https://www.youtube.com/watch?v=BTewrsVrZwM"
-}
-```
-
-#### Usage
-```bash
-# Test mode - shows what would happen without modifying database
-python utils/import_json_to_db.py --test
-
-# Import mode - actually imports data
-python utils/import_json_to_db.py --import
-
-# Custom source directory
-python utils/import_json_to_db.py --test --source /path/to/json/files
-
-# Custom database path
-python utils/import_json_to_db.py --import --db /path/to/bookmarks.db
-```
-
-#### Default Paths
-- Source: `C:\Users\user\Downloads\you_tube_summaries`
-- Database: `backend/data/bookmarks.db`
 
 ## Docker Rebuild Commands
 

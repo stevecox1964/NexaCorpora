@@ -64,7 +64,8 @@ def transcribe_audio(audio_file_path, api_key):
 
 
 def transcribe_audio_gemini(audio_file_path, api_key):
-    """Transcribe an audio file using Gemini multimodal capabilities."""
+    """Transcribe an audio file using Gemini multimodal capabilities.
+    Returns text with sentence-level timestamps in [M:SS] format."""
     import google.generativeai as genai
     genai.configure(api_key=api_key)
 
@@ -78,8 +79,16 @@ def transcribe_audio_gemini(audio_file_path, api_key):
     response = model.generate_content(
         [
             "Generate a complete, verbatim transcript of the speech in this audio file. "
-            "Include all spoken words accurately. Do not add timestamps, speaker labels, "
-            "or commentary — just output the plain text of what was said.",
+            "Include timestamps at the start of each sentence in [M:SS] format (e.g. [0:00], [1:23], [12:05]). "
+            "For videos over an hour, use [H:MM:SS] format. "
+            "Each timestamped sentence should be on its own line, separated by a blank line. "
+            "Format example:\n"
+            "[0:00] First sentence of the transcript.\n\n"
+            "[0:15] Second sentence continues here.\n\n"
+            "[0:32] And so on for the rest.\n\n"
+            "Be accurate with the timestamps — they should reflect when each sentence "
+            "actually starts in the audio. Include all spoken words. "
+            "Do not add speaker labels or commentary.",
             audio_file
         ]
     )
@@ -121,7 +130,7 @@ def run_transcription_job(app, job_id, video_id, api_key, provider='assemblyai')
                 return
 
             # Step 3: Store transcript
-            Transcript.create(video_id, text)
+            Transcript.create(video_id, text, provider=provider)
             Job.update_status(job_id, 'completed')
             logger.info(f'Transcription complete for {video_id}')
 

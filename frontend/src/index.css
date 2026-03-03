@@ -764,6 +764,28 @@ button.status-indicator.clickable:hover {
   align-items: flex-start;
 }
 
+.provider-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.3px;
+  line-height: 16px;
+}
+
+.provider-assemblyai {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.provider-gemini {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
 .summary-menu-wrapper {
   position: relative;
   display: inline-block;
@@ -1470,6 +1492,29 @@ button.status-indicator.clickable:hover {
   color: #aaa;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.embedding-stat-pending {
+  color: #f59e0b;
+}
+
+.embedding-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 6px;
+  font-size: 13px;
+  color: #fbbf24;
+  line-height: 1.4;
+}
+
+.embedding-warning svg {
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .embedding-building-hint {

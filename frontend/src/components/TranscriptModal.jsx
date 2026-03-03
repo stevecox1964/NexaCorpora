@@ -172,7 +172,14 @@ function TranscriptModal({ videoId, videoTitle, onClose }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal transcript-modal" onClick={(e) => e.stopPropagation()}>
         <div className="transcript-modal-header">
-          <h2>Transcript</h2>
+          <h2>
+            Transcript
+            {transcript?.provider && (
+              <span className={`provider-badge provider-${transcript.provider}`} style={{ marginLeft: 8, verticalAlign: 'middle' }}>
+                {transcript.provider === 'assemblyai' ? 'AssemblyAI' : 'Gemini'}
+              </span>
+            )}
+          </h2>
           <button className="btn btn-sm btn-secondary" onClick={onClose}>
             Close
           </button>

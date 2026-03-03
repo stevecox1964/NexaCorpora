@@ -191,6 +191,16 @@ def get_transcript(video_id):
     return jsonify({'success': True, 'transcript': transcript})
 
 
+@bp.route('/transcripts/<video_id>', methods=['DELETE'])
+def delete_transcript(video_id):
+    """Delete a transcript and its associated embeddings/summary."""
+    transcript = Transcript.get_by_video_id(video_id)
+    if not transcript:
+        return jsonify({'success': False, 'error': 'Transcript not found'}), 404
+    Transcript.delete(video_id)
+    return jsonify({'success': True, 'message': f'Transcript deleted for {video_id}'})
+
+
 @bp.route('/transcripts/<video_id>/status', methods=['GET'])
 def get_transcript_status(video_id):
     """Get transcript indexing status for a video."""
@@ -547,7 +557,8 @@ def get_cluster_videos(cluster_id):
     rows = db.execute('''
         SELECT v.*,
                (t.id IS NOT NULL) AS has_transcript,
-               (t.summary IS NOT NULL AND t.summary != '') AS has_summary
+               (t.summary IS NOT NULL AND t.summary != '') AS has_summary,
+               t.provider AS transcript_provider
         FROM video_clusters vc
         JOIN videos v ON v.video_id = vc.video_id
         LEFT JOIN transcripts t ON v.video_id = t.video_id

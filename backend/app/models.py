@@ -34,6 +34,7 @@ class Video:
             SELECT v.*,
                    (t.id IS NOT NULL) AS has_transcript,
                    (t.summary IS NOT NULL AND t.summary != '') AS has_summary,
+                   t.provider AS transcript_provider,
                    j.status AS job_status
             FROM videos v
             LEFT JOIN transcripts t ON v.video_id = t.video_id
@@ -116,6 +117,8 @@ class Video:
             result['hasTranscript'] = bool(row['has_transcript'])
         if 'has_summary' in row.keys():
             result['hasSummary'] = bool(row['has_summary'])
+        if 'transcript_provider' in row.keys():
+            result['transcriptProvider'] = row['transcript_provider']
         if 'job_status' in row.keys():
             result['transcriptJobStatus'] = row['job_status']
         return result
@@ -145,13 +148,13 @@ class Transcript:
         return [Transcript.row_to_dict(row) for row in rows]
 
     @staticmethod
-    def create(video_id, content):
+    def create(video_id, content, provider=None):
         db = get_db()
         try:
             db.execute('''
-                INSERT INTO transcripts (video_id, content)
-                VALUES (?, ?)
-            ''', (video_id, content))
+                INSERT INTO transcripts (video_id, content, provider)
+                VALUES (?, ?, ?)
+            ''', (video_id, content, provider))
             db.commit()
             return Transcript.get_by_video_id(video_id)
         except Exception as e:
@@ -203,6 +206,8 @@ class Transcript:
         }
         if 'summary' in row.keys():
             result['summary'] = row['summary']
+        if 'provider' in row.keys():
+            result['provider'] = row['provider']
         if 'video_title' in row.keys():
             result['videoTitle'] = row['video_title']
             result['videoUrl'] = row['video_url']

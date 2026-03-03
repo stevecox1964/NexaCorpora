@@ -258,20 +258,38 @@ function SettingsPage() {
           Embeddings power semantic search and topic clustering. Build embeddings for all transcripts that don't have them yet.
         </p>
         {embeddingStatus && (
-          <div className="embedding-stats">
-            <div className="embedding-stat">
-              <span className="embedding-stat-value">{embeddingStatus.embeddedVideos}</span>
-              <span className="embedding-stat-label">Embedded</span>
+          <>
+            <div className="embedding-stats">
+              <div className="embedding-stat">
+                <span className="embedding-stat-value">{embeddingStatus.embeddedVideos}</span>
+                <span className="embedding-stat-label">Embedded</span>
+              </div>
+              <div className="embedding-stat">
+                <span className={`embedding-stat-value${embeddingStatus.unembeddedVideos > 0 ? ' embedding-stat-pending' : ''}`}>
+                  {embeddingStatus.unembeddedVideos}
+                </span>
+                <span className="embedding-stat-label">Pending</span>
+              </div>
+              <div className="embedding-stat">
+                <span className="embedding-stat-value">{embeddingStatus.totalChunks}</span>
+                <span className="embedding-stat-label">Chunks</span>
+              </div>
             </div>
-            <div className="embedding-stat">
-              <span className="embedding-stat-value">{embeddingStatus.unembeddedVideos}</span>
-              <span className="embedding-stat-label">Pending</span>
-            </div>
-            <div className="embedding-stat">
-              <span className="embedding-stat-value">{embeddingStatus.totalChunks}</span>
-              <span className="embedding-stat-label">Chunks</span>
-            </div>
-          </div>
+            {embeddingStatus.unembeddedVideos > 0 && (
+              <div className="embedding-warning">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+                <span>
+                  {embeddingStatus.unembeddedVideos} transcript{embeddingStatus.unembeddedVideos !== 1 ? 's are' : ' is'} not
+                  embedded — search and chat won't include {embeddingStatus.unembeddedVideos !== 1 ? 'them' : 'it'}.
+                  Click <strong>Build Embeddings</strong> to fix.
+                </span>
+              </div>
+            )}
+          </>
         )}
         <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
           <button

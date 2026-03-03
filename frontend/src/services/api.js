@@ -71,6 +71,17 @@ class ApiService {
     return response.json();
   }
 
+  async deleteTranscript(videoId) {
+    const response = await fetch(`${API_BASE}/transcripts/${videoId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to delete transcript');
+    }
+    return response.json();
+  }
+
   async startTranscription(videoId) {
     const response = await fetch(`${API_BASE}/transcribe/${videoId}`, {
       method: 'POST',
