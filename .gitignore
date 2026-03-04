@@ -38,4 +38,10 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Claude Code
+.claude/
+
+# Scratch notes
+conversation-notes.md
+
 nul

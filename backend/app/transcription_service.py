@@ -142,6 +142,15 @@ def run_transcription_job(app, job_id, video_id, api_key, provider='assemblyai')
             except Exception as embed_err:
                 logger.warning(f'Auto-embed failed for {video_id} (non-fatal): {embed_err}')
 
+            # Step 5: Auto-assign to matching brains based on embedding similarity
+            try:
+                from .brain_service import auto_assign_video
+                assigned = auto_assign_video(video_id)
+                if assigned:
+                    logger.info(f'Auto-assigned {video_id} to brains: {", ".join(assigned)}')
+            except Exception as brain_err:
+                logger.warning(f'Auto-assign to brains failed for {video_id} (non-fatal): {brain_err}')
+
         except Exception as e:
             logger.error(f'Transcription failed for {video_id}: {e}')
             Job.update_status(job_id, 'failed', str(e))

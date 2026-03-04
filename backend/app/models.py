@@ -214,6 +214,159 @@ class Transcript:
         return result
 
 
+class Brain:
+    @staticmethod
+    def create(name, description=''):
+        db = get_db()
+        brain_id = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat()
+        db.execute(
+            'INSERT INTO brains (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+            (brain_id, name, description, now, now)
+        )
+        db.commit()
+        return Brain.get_by_id(brain_id)
+
+    @staticmethod
+    def get_by_id(brain_id):
+        db = get_db()
+        row = db.execute('''
+            SELECT b.*, COUNT(bv.video_id) as video_count
+            FROM brains b
+            LEFT JOIN brain_videos bv ON b.id = bv.brain_id
+            WHERE b.id = ?
+            GROUP BY b.id
+        ''', (brain_id,)).fetchone()
+        return Brain.row_to_dict(row)
+
+    @staticmethod
+    def get_all():
+        db = get_db()
+        rows = db.execute('''
+            SELECT b.*, COUNT(bv.video_id) as video_count
+            FROM brains b
+            LEFT JOIN brain_videos bv ON b.id = bv.brain_id
+            GROUP BY b.id
+            ORDER BY b.updated_at DESC
+        ''').fetchall()
+        return [Brain.row_to_dict(row) for row in rows]
+
+    @staticmethod
+    def update(brain_id, name=None, description=None):
+        db = get_db()
+        updates = []
+        params = []
+        if name is not None:
+            updates.append('name = ?')
+            params.append(name)
+        if description is not None:
+            updates.append('description = ?')
+            params.append(description)
+        if updates:
+            updates.append('updated_at = ?')
+            params.append(datetime.utcnow().isoformat())
+            params.append(brain_id)
+            db.execute(f'UPDATE brains SET {", ".join(updates)} WHERE id = ?', params)
+            db.commit()
+        return Brain.get_by_id(brain_id)
+
+    @staticmethod
+    def delete(brain_id):
+        db = get_db()
+        db.execute('DELETE FROM brain_videos WHERE brain_id = ?', (brain_id,))
+        cursor = db.execute('DELETE FROM brains WHERE id = ?', (brain_id,))
+        db.commit()
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def add_video(brain_id, video_id):
+        db = get_db()
+        try:
+            db.execute(
+                'INSERT OR IGNORE INTO brain_videos (brain_id, video_id) VALUES (?, ?)',
+                (brain_id, video_id)
+            )
+            db.execute(
+                'UPDATE brains SET updated_at = ? WHERE id = ?',
+                (datetime.utcnow().isoformat(), brain_id)
+            )
+            db.commit()
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def remove_video(brain_id, video_id):
+        db = get_db()
+        cursor = db.execute(
+            'DELETE FROM brain_videos WHERE brain_id = ? AND video_id = ?',
+            (brain_id, video_id)
+        )
+        db.execute(
+            'UPDATE brains SET updated_at = ? WHERE id = ?',
+            (datetime.utcnow().isoformat(), brain_id)
+        )
+        db.commit()
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def get_video_ids(brain_id):
+        db = get_db()
+        rows = db.execute(
+            'SELECT video_id FROM brain_videos WHERE brain_id = ?', (brain_id,)
+        ).fetchall()
+        return [row['video_id'] for row in rows]
+
+    @staticmethod
+    def get_videos(brain_id):
+        db = get_db()
+        rows = db.execute('''
+            SELECT v.*,
+                   (t.id IS NOT NULL) AS has_transcript,
+                   (t.summary IS NOT NULL AND t.summary != '') AS has_summary,
+                   t.provider AS transcript_provider
+            FROM brain_videos bv
+            JOIN videos v ON v.video_id = bv.video_id
+            LEFT JOIN transcripts t ON v.video_id = t.video_id
+            WHERE bv.brain_id = ?
+            ORDER BY bv.added_at DESC
+        ''', (brain_id,)).fetchall()
+        return [Video.row_to_dict(row) for row in rows]
+
+    @staticmethod
+    def get_thumbnail_video_ids(brain_id, limit=4):
+        db = get_db()
+        rows = db.execute(
+            'SELECT video_id FROM brain_videos WHERE brain_id = ? LIMIT ?',
+            (brain_id, limit)
+        ).fetchall()
+        return [row['video_id'] for row in rows]
+
+    @staticmethod
+    def get_brains_for_video(video_id):
+        db = get_db()
+        rows = db.execute('''
+            SELECT b.id, b.name
+            FROM brain_videos bv
+            JOIN brains b ON b.id = bv.brain_id
+            WHERE bv.video_id = ?
+        ''', (video_id,)).fetchall()
+        return [{'id': row['id'], 'name': row['name']} for row in rows]
+
+    @staticmethod
+    def row_to_dict(row):
+        if row is None:
+            return None
+        return {
+            'id': row['id'],
+            'name': row['name'],
+            'description': row['description'],
+            'videoCount': row['video_count'] if 'video_count' in row.keys() else 0,
+            'createdAt': row['created_at'],
+            'updatedAt': row['updated_at'],
+        }
+
+
 class Job:
     @staticmethod
     def create(video_id, job_type):

@@ -5,7 +5,7 @@ import AddVideoModal from './components/AddVideoModal';
 import TranscriptModal from './components/TranscriptModal';
 import ChatDrawer from './components/ChatDrawer';
 import SettingsPage from './components/SettingsPage';
-import TopicsPage from './components/TopicsPage';
+import BrainsPage from './components/BrainsPage';
 import { apiService } from './services/api';
 
 function App() {
@@ -507,7 +507,7 @@ function App() {
           </>
         )}
 
-        {activePage === 'topics' && <TopicsPage />}
+        {activePage === 'brains' && <BrainsPage />}
 
         {activePage === 'settings' && <SettingsPage />}
 

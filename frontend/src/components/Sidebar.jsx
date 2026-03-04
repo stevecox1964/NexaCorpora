@@ -50,16 +50,14 @@ function Sidebar({ activePage, onNavigate }) {
             <span>Videos</span>
           </button>
           <button
-            className={`sidebar-nav-item ${activePage === 'topics' ? 'active' : ''}`}
-            onClick={() => handleNavigate('topics')}
+            className={`sidebar-nav-item ${activePage === 'brains' ? 'active' : ''}`}
+            onClick={() => handleNavigate('brains')}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="7" height="7" rx="1" />
-              <rect x="14" y="3" width="7" height="7" rx="1" />
-              <rect x="3" y="14" width="7" height="7" rx="1" />
-              <rect x="14" y="14" width="7" height="7" rx="1" />
+              <path d="M12 2a8 8 0 0 0-8 8c0 3.5 2 6 4 7.5V20h8v-2.5c2-1.5 4-4 4-7.5a8 8 0 0 0-8-8z" />
+              <path d="M9 22h6" />
             </svg>
-            <span>Topics</span>
+            <span>Brains</span>
           </button>
         </div>
 

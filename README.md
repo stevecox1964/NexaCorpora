@@ -1,18 +1,19 @@
 # BookMarkManager
 
-A self-hosted app for saving and managing YouTube video bookmarks with built-in transcription, AI-powered summaries, semantic search, topic clustering, and a RAG-powered chat interface. Runs as a single Docker container — Flask serves both the REST API and the React frontend. Includes a Chrome extension for one-click saving from YouTube.
+A self-hosted app for saving and managing YouTube video bookmarks with built-in transcription, AI-powered summaries, semantic search, curated AI knowledge bases ("Brains"), and a RAG-powered chat interface. Runs as a single Docker container — Flask serves both the REST API and the React frontend. Includes a Chrome extension for one-click saving from YouTube.
 
 ## Features
 
 - **Save YouTube videos** via the Chrome extension or the web UI
-- **Transcribe videos** using yt-dlp + AssemblyAI or Gemini Audio, with real-time status polling
-- **View transcripts** in-app with copy-to-clipboard support
-- **AI-powered summaries** — generate per-video summaries with Google Gemini, displayed inline as expandable rows
+- **Transcribe videos** using yt-dlp + AssemblyAI or Gemini Audio, with real-time status polling and provider badges
+- **View transcripts** in-app with an embedded YouTube player and clickable timestamps
+- **AI-powered summaries** — generate structured (FAQ-style) or narrative summaries with Google Gemini, displayed inline as expandable rows
 - **Bulk summarize** — "Summarize All" button generates summaries for all transcribed videos at once
 - **Semantic search** — vector similarity search across transcript chunks using Gemini embeddings + sqlite-vec
-- **Topic clustering** — auto-group videos by theme using k-means clustering with Gemini-generated topic labels
-- **Chat with your videos** — RAG-powered chat drawer with SSE streaming; ask questions and get answers grounded in your transcript knowledge base
-- **Import bookmarks** from Chrome or from JSON files
+- **AI Brains** — curated knowledge bases: group videos into brains, chat with brain-scoped RAG context, auto-assign videos after transcription
+- **Chat with your videos** — RAG-powered chat drawer with SSE streaming, embedded YouTube player, and clickable timestamps
+- **Delete & re-manage transcripts** — delete transcripts (cascades to embeddings + summary), re-transcribe with a different provider
+- **Import bookmarks** from Chrome
 - **Configurable settings** — choose transcription provider, Gemini model, manage embeddings, and customize your profile
 - **Paginated list view** with thumbnails, video info, transcript/summary status, and actions
 
@@ -22,7 +23,7 @@ A self-hosted app for saving and managing YouTube video bookmarks with built-in 
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - An [AssemblyAI API key](https://www.assemblyai.com/) (for transcription via AssemblyAI)
-- A [Google AI API key](https://aistudio.google.com/apikey) (for summaries, chat, embeddings, clustering, and optional Gemini transcription)
+- A [Google AI API key](https://aistudio.google.com/apikey) (for summaries, chat, embeddings, and optional Gemini transcription)
 
 ### Run
 
@@ -78,53 +79,53 @@ BookMarkManager/
 │   ├── background.js                # Scrapes YouTube DOM; POSTs to Flask API
 │   ├── popup.html / popup.js        # Popup UI and logic
 │   └── icons/
-├── frontend/                        # React SPA (Vite + React 18)
+├── frontend/                        # React SPA (Vite)
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── VideoCard.jsx        # Video row with transcript/summary actions
 │   │   │   ├── AddVideoModal.jsx    # Manual video add modal
-│   │   │   ├── TranscriptModal.jsx  # Transcript viewer modal
+│   │   │   ├── TranscriptModal.jsx  # Transcript viewer with embedded YouTube player
 │   │   │   ├── ChatDrawer.jsx       # RAG-powered chat drawer (Gemini + vector search)
-│   │   │   ├── Sidebar.jsx          # Left navigation (Videos, Topics, Settings)
+│   │   │   ├── Sidebar.jsx          # Left navigation (Videos, Brains, Settings)
 │   │   │   ├── SettingsPage.jsx     # Unified settings (profile, model, provider, embeddings, API status)
-│   │   │   └── TopicsPage.jsx       # Topic clustering view (all groups with videos visible)
+│   │   │   └── BrainsPage.jsx       # AI Brains — curated knowledge bases with scoped chat
 │   │   ├── services/
 │   │   │   └── api.js               # API service layer (fetch + SSE streaming)
+│   │   ├── utils/
+│   │   │   └── chatUtils.jsx        # Shared timestamp parsing + rendering for chat messages
 │   │   └── App.jsx                  # Main app: sidebar layout, search, video list, polling
 │   └── package.json
 ├── backend/                         # Flask API + SQLite + sqlite-vec
 │   ├── app/
 │   │   ├── __init__.py              # Serves SPA from /app/static
 │   │   ├── routes.py                # API endpoints
-│   │   ├── models.py                # SQLite models (Video, Transcript, Job, Setting)
+│   │   ├── models.py                # SQLite models (Video, Transcript, Job, Setting, Brain)
 │   │   ├── database.py              # DB connection + schema + sqlite-vec extension
 │   │   ├── gemini_service.py        # Gemini integration (summaries + RAG chat)
 │   │   ├── embedding_service.py     # Gemini embeddings + sqlite-vec vector search
-│   │   ├── clustering_service.py    # k-means topic clustering + Gemini labeling
+│   │   ├── brain_service.py         # Brain-scoped RAG search, chat, auto-assign
 │   │   ├── transcription_service.py # yt-dlp + AssemblyAI/Gemini transcription
 │   │   ├── bookmarks.py             # Chrome bookmarks parser
 │   │   └── transcripts.py           # Transcript search + status helpers
 │   ├── run.py
 │   └── requirements.txt
-├── utils/
-│   └── import_json_to_db.py         # JSON file importer
 ├── sql/                             # Schema and query references
 ├── .env.example
 ├── Dockerfile                       # Multi-stage: build frontend + install ffmpeg + run backend
 └── docker-compose.yaml              # Single service, port 5000
 ```
 
-**Stack:** React 18, Vite, Flask, SQLite, sqlite-vec, scikit-learn, Gunicorn, yt-dlp, AssemblyAI, Google Gemini, Docker
+**Stack:** React, Vite, Flask, SQLite, sqlite-vec, Gunicorn, yt-dlp, AssemblyAI, Google Gemini, Docker
 
 ### How It Works
 
 - **Frontend** is built at Docker image build time and served as static files by Flask
 - **Backend** exposes a REST API under `/api/*` and serves the SPA for all other routes
-- **Transcription** runs in a background thread: yt-dlp downloads audio, AssemblyAI or Gemini transcribes it, and the frontend polls for status updates. Transcripts are auto-embedded for vector search after completion.
+- **Transcription** runs in a background thread: yt-dlp downloads audio, AssemblyAI or Gemini transcribes it with `[M:SS]` timestamps, and the frontend polls for status updates. Transcripts are auto-embedded for vector search after completion.
 - **Embeddings** use Gemini's `gemini-embedding-001` model (768-dim) to embed transcript chunks into a sqlite-vec virtual table for KNN similarity search
 - **Semantic search** embeds the query via Gemini, runs KNN against the vector store, and returns the best-matching transcript chunks grouped by video
-- **Topic clustering** computes per-video mean embeddings, runs k-means via scikit-learn, and has Gemini generate human-readable topic labels
-- **Summarization** reads transcripts from the DB, sends them to Gemini, and stores the result
+- **AI Brains** let you group videos into curated knowledge bases with brain-scoped RAG chat. Videos are auto-assigned to matching brains after transcription (>0.85 cosine similarity).
+- **Summarization** reads transcripts from the DB, sends them to Gemini with a structured or narrative prompt, and stores the result
 - **Chat (RAG)** retrieves the top-k matching transcript chunks via vector search (falls back to summaries), passes them as context to Gemini, and streams the response via SSE
 - **Data** is persisted in a SQLite database on a Docker volume (`backend/data/`)
 
@@ -141,6 +142,7 @@ BookMarkManager/
 | `GET` | `/api/jobs/<job_id>` | Poll job status |
 | `GET` | `/api/jobs/video/<video_id>` | Get active job for a video |
 | `GET` | `/api/transcripts/<id>` | Get transcript text |
+| `DELETE` | `/api/transcripts/<id>` | Delete transcript (cascades to embeddings + summary) |
 | `GET` | `/api/transcripts/<id>/status` | Check transcript status |
 | `GET` | `/api/transcripts/search?q=` | Search transcripts (text) |
 | `POST` | `/api/summaries/<id>` | Generate summary via Gemini |
@@ -149,10 +151,18 @@ BookMarkManager/
 | `POST` | `/api/chat` | Stream chat response (SSE, RAG) |
 | `GET` | `/api/search?q=` | Semantic vector search |
 | `POST` | `/api/embeddings/build` | Embed all unembedded transcripts |
+| `POST` | `/api/embeddings/rebuild` | Clear and re-embed all transcripts |
 | `GET` | `/api/embeddings/status` | Get embedding statistics |
-| `POST` | `/api/clusters/build` | Build topic clusters (k-means + Gemini labels) |
-| `GET` | `/api/clusters` | List topic clusters |
-| `GET` | `/api/clusters/<id>/videos` | Get videos in a cluster |
+| `GET` | `/api/brains` | List all brains |
+| `POST` | `/api/brains` | Create a brain |
+| `GET` | `/api/brains/<id>` | Get brain with videos |
+| `PUT` | `/api/brains/<id>` | Update brain name/description |
+| `DELETE` | `/api/brains/<id>` | Delete a brain |
+| `POST` | `/api/brains/<id>/videos` | Add a video to a brain |
+| `DELETE` | `/api/brains/<id>/videos/<vid>` | Remove a video from a brain |
+| `POST` | `/api/brains/<id>/videos/bulk` | Bulk add videos to a brain |
+| `POST` | `/api/brains/<id>/chat` | Brain-scoped chat (SSE, RAG) |
+| `GET` | `/api/brains/suggest/<vid>` | Suggest brains for a video |
 | `GET` | `/api/settings` | Get app settings + API key status |
 | `PUT` | `/api/settings` | Update settings |
 | `GET` | `/api/stats` | Get collection statistics |
@@ -183,6 +193,7 @@ BookMarkManager/
 | video_id | TEXT | Foreign key to videos |
 | content | TEXT | Full transcript text |
 | summary | TEXT | Gemini-generated summary |
+| provider | TEXT | Transcription provider (assemblyai or gemini) |
 | indexed_at | TEXT | Indexing timestamp |
 
 ### transcript_chunks
@@ -221,16 +232,30 @@ BookMarkManager/
 | value | TEXT | Setting value |
 | updated_at | TEXT | Last update timestamp |
 
-### video_clusters / cluster_labels
+### brains
 
-Topic clustering tables — `video_clusters` maps videos to cluster IDs, `cluster_labels` stores Gemini-generated topic labels with video counts.
+| Column | Type | Description |
+|--------|------|-------------|
+| id | TEXT | Primary key (UUID) |
+| name | TEXT | Brain name (max 100 chars) |
+| description | TEXT | Optional description (max 500 chars) |
+| created_at | TEXT | Creation timestamp |
+| updated_at | TEXT | Last update timestamp |
+
+### brain_videos
+
+| Column | Type | Description |
+|--------|------|-------------|
+| brain_id | TEXT | Foreign key to brains (composite PK) |
+| video_id | TEXT | Foreign key to videos (composite PK) |
+| added_at | TEXT | When video was added to brain |
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ASSEMBLYAI_API_KEY` | For transcription | Your AssemblyAI API key |
-| `GOOGLE_API_KEY` | For summaries, chat, embeddings, clustering | Your Google AI API key |
+| `GOOGLE_API_KEY` | For summaries, chat, embeddings | Your Google AI API key |
 | `GEMINI_MODEL` | No (default: `gemini-2.5-flash`) | Gemini model to use |
 
 Available Gemini model options:
@@ -255,22 +280,6 @@ npm install
 npm run dev
 # UI at http://localhost:5173 (Vite proxies /api to port 5000)
 ```
-
-## Utilities
-
-### JSON Import
-
-Bulk-import video metadata from JSON files:
-
-```bash
-# Dry run
-python utils/import_json_to_db.py --test
-
-# Import
-python utils/import_json_to_db.py --import
-```
-
-See `utils/import_json_to_db.py` for options (`--source`, `--db`).
 
 ## License
 

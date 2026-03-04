@@ -283,33 +283,133 @@ class ApiService {
     return response.json();
   }
 
-  // Build topic clusters
-  async buildClusters() {
-    const response = await fetch(`${API_BASE}/clusters/build`, {
+  // Brain endpoints
+
+  async getBrains() {
+    const response = await fetch(`${API_BASE}/brains`);
+    if (!response.ok) throw new Error('Failed to fetch brains');
+    return response.json();
+  }
+
+  async createBrain(name, description = '') {
+    const response = await fetch(`${API_BASE}/brains`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description }),
     });
     if (!response.ok) {
       const data = await response.json();
-      throw new Error(data.error || 'Failed to build clusters');
+      throw new Error(data.error || 'Failed to create brain');
     }
     return response.json();
   }
 
-  // Get all topic clusters
-  async getClusters() {
-    const response = await fetch(`${API_BASE}/clusters`);
+  async getBrain(brainId) {
+    const response = await fetch(`${API_BASE}/brains/${brainId}`);
+    if (!response.ok) throw new Error('Failed to fetch brain');
+    return response.json();
+  }
+
+  async updateBrain(brainId, updates) {
+    const response = await fetch(`${API_BASE}/brains/${brainId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
     if (!response.ok) {
-      throw new Error('Failed to fetch clusters');
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to update brain');
     }
     return response.json();
   }
 
-  // Get videos in a cluster
-  async getClusterVideos(clusterId) {
-    const response = await fetch(`${API_BASE}/clusters/${clusterId}/videos`);
+  async deleteBrain(brainId) {
+    const response = await fetch(`${API_BASE}/brains/${brainId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to delete brain');
+    return response.json();
+  }
+
+  async addBrainVideo(brainId, videoId) {
+    const response = await fetch(`${API_BASE}/brains/${brainId}/videos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoId }),
+    });
     if (!response.ok) {
-      throw new Error('Failed to fetch cluster videos');
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to add video to brain');
     }
+    return response.json();
+  }
+
+  async removeBrainVideo(brainId, videoId) {
+    const response = await fetch(`${API_BASE}/brains/${brainId}/videos/${videoId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to remove video from brain');
+    return response.json();
+  }
+
+  async addBrainVideosBulk(brainId, videoIds) {
+    const response = await fetch(`${API_BASE}/brains/${brainId}/videos/bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoIds }),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to add videos to brain');
+    }
+    return response.json();
+  }
+
+  async brainChatStream(brainId, message, history, onChunk, onDone, onError) {
+    try {
+      const response = await fetch(`${API_BASE}/brains/${brainId}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, history }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Chat request failed');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.error) { onError(data.error); return; }
+              if (data.done) { onDone(); return; }
+              if (data.text) onChunk(data.text);
+            } catch (e) { /* skip */ }
+          }
+        }
+      }
+      onDone();
+    } catch (err) {
+      onError(err.message);
+    }
+  }
+
+  async suggestBrains(videoId) {
+    const response = await fetch(`${API_BASE}/brains/suggest/${videoId}`);
+    if (!response.ok) throw new Error('Failed to get brain suggestions');
     return response.json();
   }
 }

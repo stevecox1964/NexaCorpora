@@ -1,7 +1,7 @@
 import os
 import json
 from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
-from .models import Video, Job, Transcript, Setting
+from .models import Video, Job, Transcript, Setting, Brain
 from .bookmarks import get_chrome_youtube_bookmarks
 from . import transcripts
 from .transcription_service import start_transcription
@@ -33,10 +33,14 @@ def get_videos():
     # Get total count and videos
     total = Video.count_all()
     videos = Video.get_all(limit=per_page, offset=offset)
-    
+
+    # Attach brain membership to each video
+    for video in videos:
+        video['brains'] = Brain.get_brains_for_video(video['videoId'])
+
     # Calculate total pages
     total_pages = (total + per_page - 1) // per_page if total > 0 else 1
-    
+
     return jsonify({
         'success': True,
         'videos': videos,
@@ -493,94 +497,6 @@ def embeddings_status():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-# Cluster endpoints
-
-@bp.route('/clusters/build', methods=['POST'])
-def build_clusters():
-    """Run topic clustering over all video embeddings."""
-    n_clusters = request.args.get('n', None, type=int)
-    try:
-        from .clustering_service import build_clusters as do_build
-        result = do_build(n_clusters=n_clusters)
-        return jsonify({'success': True, **result})
-    except ValueError as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'Clustering failed: {str(e)}'}), 500
-
-
-@bp.route('/clusters', methods=['GET'])
-def get_clusters():
-    """Get all topic clusters with labels and video counts."""
-    from .database import get_db
-    db = get_db()
-    rows = db.execute('''
-        SELECT cl.cluster_id, cl.label, cl.video_count, cl.updated_at
-        FROM cluster_labels cl
-        ORDER BY cl.video_count DESC
-    ''').fetchall()
-
-    clusters = []
-    for row in rows:
-        # Grab up to 4 thumbnail video IDs for this cluster
-        vids = db.execute('''
-            SELECT vc.video_id
-            FROM video_clusters vc
-            JOIN videos v ON v.video_id = vc.video_id
-            WHERE vc.cluster_id = ?
-            LIMIT 4
-        ''', (row['cluster_id'],)).fetchall()
-
-        clusters.append({
-            'clusterId': row['cluster_id'],
-            'label': row['label'],
-            'videoCount': row['video_count'],
-            'updatedAt': row['updated_at'],
-            'thumbnailVideoIds': [v['video_id'] for v in vids],
-        })
-
-    return jsonify({'success': True, 'clusters': clusters})
-
-
-@bp.route('/clusters/<int:cluster_id>/videos', methods=['GET'])
-def get_cluster_videos(cluster_id):
-    """Get all videos in a specific cluster."""
-    from .database import get_db
-    db = get_db()
-
-    label_row = db.execute(
-        'SELECT label FROM cluster_labels WHERE cluster_id = ?', (cluster_id,)
-    ).fetchone()
-    if not label_row:
-        return jsonify({'success': False, 'error': 'Cluster not found'}), 404
-
-    rows = db.execute('''
-        SELECT v.*,
-               (t.id IS NOT NULL) AS has_transcript,
-               (t.summary IS NOT NULL AND t.summary != '') AS has_summary,
-               t.provider AS transcript_provider
-        FROM video_clusters vc
-        JOIN videos v ON v.video_id = vc.video_id
-        LEFT JOIN transcripts t ON v.video_id = t.video_id
-        WHERE vc.cluster_id = ?
-        ORDER BY v.scraped_at DESC
-    ''', (cluster_id,)).fetchall()
-
-    videos = []
-    for row in rows:
-        d = Video.row_to_dict(row)
-        d['hasTranscript'] = bool(row['has_transcript'])
-        d['hasSummary'] = bool(row['has_summary'])
-        videos.append(d)
-
-    return jsonify({
-        'success': True,
-        'label': label_row['label'],
-        'clusterId': cluster_id,
-        'videos': videos,
-    })
-
-
 # Stats endpoint
 
 @bp.route('/stats', methods=['GET'])
@@ -599,3 +515,170 @@ def get_stats():
         'totalTranscripts': total_transcripts,
         'totalSummaries': total_summaries
     })
+
+
+# Brain endpoints
+
+@bp.route('/brains', methods=['GET'])
+def get_brains():
+    """Get all brains with video counts and thumbnail video IDs."""
+    brains = Brain.get_all()
+    for brain in brains:
+        brain['thumbnailVideoIds'] = Brain.get_thumbnail_video_ids(brain['id'])
+    return jsonify({'success': True, 'brains': brains})
+
+
+@bp.route('/brains', methods=['POST'])
+def create_brain():
+    """Create a new brain."""
+    data = request.get_json()
+    if not data or not data.get('name', '').strip():
+        return jsonify({'success': False, 'error': 'Name is required'}), 400
+
+    name = data['name'].strip()[:100]
+    description = data.get('description', '').strip()[:500]
+
+    brain = Brain.create(name, description)
+    return jsonify({'success': True, 'brain': brain}), 201
+
+
+@bp.route('/brains/<brain_id>', methods=['GET'])
+def get_brain(brain_id):
+    """Get a single brain with its videos."""
+    brain = Brain.get_by_id(brain_id)
+    if not brain:
+        return jsonify({'success': False, 'error': 'Brain not found'}), 404
+
+    brain['videos'] = Brain.get_videos(brain_id)
+    brain['thumbnailVideoIds'] = Brain.get_thumbnail_video_ids(brain_id)
+    return jsonify({'success': True, 'brain': brain})
+
+
+@bp.route('/brains/<brain_id>', methods=['PUT'])
+def update_brain(brain_id):
+    """Update brain name and/or description."""
+    brain = Brain.get_by_id(brain_id)
+    if not brain:
+        return jsonify({'success': False, 'error': 'Brain not found'}), 404
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+    name = data.get('name')
+    description = data.get('description')
+    if name is not None:
+        name = name.strip()[:100]
+        if not name:
+            return jsonify({'success': False, 'error': 'Name cannot be empty'}), 400
+    if description is not None:
+        description = description.strip()[:500]
+
+    updated = Brain.update(brain_id, name=name, description=description)
+    return jsonify({'success': True, 'brain': updated})
+
+
+@bp.route('/brains/<brain_id>', methods=['DELETE'])
+def delete_brain(brain_id):
+    """Delete a brain and its video associations."""
+    deleted = Brain.delete(brain_id)
+    if not deleted:
+        return jsonify({'success': False, 'error': 'Brain not found'}), 404
+    return jsonify({'success': True, 'message': f'Brain {brain_id} deleted'})
+
+
+@bp.route('/brains/<brain_id>/videos', methods=['POST'])
+def add_brain_video(brain_id):
+    """Add a video to a brain."""
+    brain = Brain.get_by_id(brain_id)
+    if not brain:
+        return jsonify({'success': False, 'error': 'Brain not found'}), 404
+
+    data = request.get_json()
+    video_id = data.get('videoId') if data else None
+    if not video_id:
+        return jsonify({'success': False, 'error': 'videoId is required'}), 400
+
+    video = Video.get_by_video_id(video_id)
+    if not video:
+        return jsonify({'success': False, 'error': 'Video not found'}), 404
+
+    Brain.add_video(brain_id, video_id)
+    return jsonify({'success': True, 'brain': Brain.get_by_id(brain_id)})
+
+
+@bp.route('/brains/<brain_id>/videos/<video_id>', methods=['DELETE'])
+def remove_brain_video(brain_id, video_id):
+    """Remove a video from a brain."""
+    removed = Brain.remove_video(brain_id, video_id)
+    if not removed:
+        return jsonify({'success': False, 'error': 'Video not in brain'}), 404
+    return jsonify({'success': True, 'brain': Brain.get_by_id(brain_id)})
+
+
+@bp.route('/brains/<brain_id>/videos/bulk', methods=['POST'])
+def add_brain_videos_bulk(brain_id):
+    """Add multiple videos to a brain at once."""
+    brain = Brain.get_by_id(brain_id)
+    if not brain:
+        return jsonify({'success': False, 'error': 'Brain not found'}), 404
+
+    data = request.get_json()
+    video_ids = data.get('videoIds', []) if data else []
+
+    added = 0
+    for vid in video_ids:
+        if Brain.add_video(brain_id, vid):
+            added += 1
+
+    return jsonify({'success': True, 'added': added, 'brain': Brain.get_by_id(brain_id)})
+
+
+@bp.route('/brains/<brain_id>/chat', methods=['POST'])
+def brain_chat(brain_id):
+    """Stream a chat response scoped to a brain's knowledge base."""
+    brain = Brain.get_by_id(brain_id)
+    if not brain:
+        return jsonify({'success': False, 'error': 'Brain not found'}), 404
+
+    data = request.get_json()
+    if not data or 'message' not in data:
+        return jsonify({'success': False, 'error': 'Message is required'}), 400
+
+    user_message = data['message']
+    conversation_history = data.get('history', [])
+
+    try:
+        from .brain_service import chat_with_brain
+
+        def generate():
+            try:
+                for chunk in chat_with_brain(brain_id, user_message, conversation_history):
+                    yield f"data: {json.dumps({'text': chunk})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+            except ValueError as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'error': f'Chat failed: {str(e)}'})}\n\n"
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no'
+            }
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/brains/suggest/<video_id>', methods=['GET'])
+def suggest_brains(video_id):
+    """Get suggested brains for a video based on embedding similarity."""
+    try:
+        from .brain_service import suggest_brains_for_video
+        suggestions = suggest_brains_for_video(video_id)
+        return jsonify({'success': True, 'suggestions': suggestions})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500

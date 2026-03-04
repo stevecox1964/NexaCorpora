@@ -1,13 +1,17 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { apiService } from '../services/api';
+import { renderChatContent } from '../utils/chatUtils';
 
 function ChatDrawer() {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [playerVideoId, setPlayerVideoId] = useState(null);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const playerRef = useRef(null);
+  const apiLoadedRef = useRef(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -18,6 +22,94 @@ function ChatDrawer() {
       inputRef.current.focus();
     }
   }, [isOpen]);
+
+  // Load YouTube IFrame API
+  useEffect(() => {
+    if (window.YT && window.YT.Player) {
+      apiLoadedRef.current = true;
+      return;
+    }
+
+    if (!document.getElementById('yt-iframe-api')) {
+      const tag = document.createElement('script');
+      tag.id = 'yt-iframe-api';
+      tag.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(tag);
+    }
+
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      apiLoadedRef.current = true;
+      if (prev) prev();
+    };
+  }, []);
+
+  // Clean up player on unmount
+  useEffect(() => {
+    return () => {
+      if (playerRef.current) {
+        try { playerRef.current.destroy(); } catch (e) { /* ignore */ }
+        playerRef.current = null;
+      }
+    };
+  }, []);
+
+  const createOrSeekPlayer = useCallback((seconds, videoId) => {
+    // If player exists and same video, just seek
+    if (playerRef.current && playerVideoId === videoId) {
+      playerRef.current.seekTo(seconds, true);
+      playerRef.current.playVideo();
+      return;
+    }
+
+    // If player exists but different video, destroy it first
+    if (playerRef.current) {
+      try { playerRef.current.destroy(); } catch (e) { /* ignore */ }
+      playerRef.current = null;
+    }
+
+    setPlayerVideoId(videoId);
+
+    if (!apiLoadedRef.current && !(window.YT && window.YT.Player)) {
+      // API not ready yet — will be created when container renders
+      return;
+    }
+
+    apiLoadedRef.current = true;
+
+    setTimeout(() => {
+      const container = document.getElementById('yt-player-chat');
+      if (!container) return;
+
+      playerRef.current = new window.YT.Player('yt-player-chat', {
+        videoId: videoId,
+        playerVars: {
+          autoplay: 1,
+          start: seconds,
+          modestbranding: 1,
+          rel: 0,
+        },
+        events: {
+          onReady: (event) => {
+            event.target.seekTo(seconds, true);
+            event.target.playVideo();
+          },
+        },
+      });
+    }, 50);
+  }, [playerVideoId]);
+
+  const handleTimestampClick = useCallback((seconds, timestamp, videoId) => {
+    createOrSeekPlayer(seconds, videoId);
+  }, [createOrSeekPlayer]);
+
+  const closePlayer = useCallback(() => {
+    if (playerRef.current) {
+      try { playerRef.current.destroy(); } catch (e) { /* ignore */ }
+      playerRef.current = null;
+    }
+    setPlayerVideoId(null);
+  }, []);
 
   const handleSend = async () => {
     const text = inputText.trim();
@@ -64,6 +156,7 @@ function ChatDrawer() {
 
   const handleClear = () => {
     setMessages([]);
+    closePlayer();
   };
 
   if (!isOpen) {
@@ -89,6 +182,19 @@ function ChatDrawer() {
           </button>
         </div>
       </div>
+
+      {playerVideoId && (
+        <div className="chat-player-wrapper">
+          <div id="yt-player-chat"></div>
+          <button className="chat-player-close" onClick={closePlayer} title="Close player">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       <div className="chat-drawer-messages">
         {messages.length === 0 && (
           <div className="chat-empty">
@@ -98,7 +204,9 @@ function ChatDrawer() {
         {messages.map((msg, i) => (
           <div key={i} className={`chat-message chat-message-${msg.role}`}>
             <div className="chat-message-content">
-              {msg.content || (isStreaming && i === messages.length - 1 ? '...' : '')}
+              {msg.role === 'assistant' && msg.content
+                ? renderChatContent(msg.content, handleTimestampClick)
+                : msg.content || (isStreaming && i === messages.length - 1 ? '...' : '')}
             </div>
           </div>
         ))}

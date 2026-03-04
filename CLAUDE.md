@@ -94,18 +94,19 @@ Chunks immediately available for semantic search + chat RAG
 Manual bulk: POST /api/embeddings/build → embeds all unembedded transcripts
 ```
 
-### Topic Clustering Flow
+### AI Brains Flow
 ```
-User clicks "Build Topics" on Topics page
-     ↓ POST /api/clusters/build
-clustering_service.py
-  1. Fetches all embeddings from vec_chunks, averages per video
-  2. Runs k-means (scikit-learn) with auto-determined k = sqrt(n_videos)
-  3. For each cluster, sends video titles/summaries to Gemini for label generation
-  4. Stores assignments in video_clusters, labels in cluster_labels
+User creates a "Brain" (curated knowledge base) on the Brains page
+     ↓ POST /api/brains { name, description }
+     ↓ adds videos via POST /api/brains/<brain_id>/videos or /videos/bulk
+brain_service.py
+  - Brain-scoped RAG: embeds query → KNN over vec_chunks → post-filters to brain's videos
+  - Falls back to summaries from brain's videos if no embeddings exist
+  - Chat streaming via SSE, same architecture as global chat
      ↓
-Frontend Topics page shows all topic groups as scrollable rows
-Each group displays its label, video count, and full video list with action buttons
+Frontend Brains page: card grid → detail view with Videos + Chat tabs
+Chat tab includes embedded YouTube player with clickable timestamps
+Auto-assign: after transcription, videos auto-assigned to brains with >0.85 similarity
 ```
 
 ## Architecture
@@ -126,25 +127,27 @@ BookMarkManager/
 │   │   │   ├── AddVideoModal.jsx    # Modal for manually adding videos
 │   │   │   ├── TranscriptModal.jsx  # Modal for viewing transcript text
 │   │   │   ├── ChatDrawer.jsx       # Bottom drawer chat component (Gemini-powered)
-│   │   │   ├── Sidebar.jsx          # Left navigation sidebar (Videos, Topics, Settings)
+│   │   │   ├── Sidebar.jsx          # Left navigation sidebar (Videos, Brains, Settings)
 │   │   │   ├── SettingsPage.jsx     # Unified settings page (profile, model config, transcription provider, embeddings, API status)
-│   │   │   └── TopicsPage.jsx       # Topic clustering view (cluster cards, video lists)
+│   │   │   └── BrainsPage.jsx       # AI Brains — curated knowledge bases with scoped chat
 │   │   ├── services/
 │   │   │   └── api.js               # API service layer (all fetch calls + SSE streaming)
+│   │   ├── utils/
+│   │   │   └── chatUtils.jsx        # Shared timestamp parsing + rendering for chat messages
 │   │   └── App.jsx                  # Main app: sidebar layout, page switching, video list, transcription polling
 │   └── package.json
 ├── backend/                  # Python Flask API
 │   ├── app/
 │   │   ├── __init__.py              # Serves SPA from /app/static when present
-│   │   ├── routes.py                # API endpoints (videos, transcripts, jobs, chat, summaries, search, embeddings, clusters, settings, stats)
-│   │   ├── models.py                # SQLite models (Video, Transcript, Job, Setting)
+│   │   ├── routes.py                # API endpoints (videos, transcripts, jobs, chat, summaries, search, embeddings, brains, settings, stats)
+│   │   ├── models.py                # SQLite models (Video, Transcript, Job, Setting, Brain)
 │   │   ├── database.py              # DB connection + schema init + migrations + settings table + sqlite-vec
 │   │   ├── bookmarks.py             # Chrome bookmarks parser
 │   │   ├── transcripts.py           # Transcript search + status helpers
 │   │   ├── transcription_service.py # yt-dlp download + AssemblyAI/Gemini transcription + auto-embed
 │   │   ├── gemini_service.py        # Google Gemini integration (summaries + RAG chat streaming)
 │   │   ├── embedding_service.py     # Gemini embeddings: chunking, embedding, vector search via sqlite-vec
-│   │   └── clustering_service.py    # k-means topic clustering + Gemini cluster labeling
+│   │   └── brain_service.py         # Brain-scoped RAG search, chat, auto-assign via embedding similarity
 │   ├── run.py
 │   └── requirements.txt
 ├── utils/                    # Utility scripts (empty)
@@ -275,20 +278,47 @@ Clear all existing embeddings and re-embed every transcript from scratch. Useful
 Get embedding statistics.
 - Response: `{ "success": true, "totalTranscripts": 42, "embeddedVideos": 30, "unembeddedVideos": 12, "totalChunks": 450 }`
 
-### Cluster Endpoints
+### Brain Endpoints
 
-#### POST /api/clusters/build
-Run k-means topic clustering over all video embeddings, label clusters with Gemini.
-- Query params: `n` (optional, number of clusters; auto-determined if omitted)
-- Response: `{ "success": true, "clusters": [{ "clusterId", "label", "videoCount" }], "totalVideos": 30, "totalClusters": 5 }`
+#### GET /api/brains
+Get all brains with video counts and thumbnail video IDs.
+- Response: `{ "success": true, "brains": [{ "id", "name", "description", "videoCount", "thumbnailVideoIds": [...] }] }`
 
-#### GET /api/clusters
-Get all topic clusters with labels, video counts, and thumbnail video IDs.
-- Response: `{ "success": true, "clusters": [{ "clusterId", "label", "videoCount", "updatedAt", "thumbnailVideoIds": ["abc", "def"] }] }`
+#### POST /api/brains
+Create a new brain.
+- Body: `{ "name": "...", "description?": "..." }`
+- Response: `{ "success": true, "brain": { ... } }`
 
-#### GET /api/clusters/<cluster_id>/videos
-Get all videos in a specific cluster.
-- Response: `{ "success": true, "label": "...", "clusterId": 0, "videos": [{ ...video fields, hasTranscript, hasSummary, transcriptProvider }] }`
+#### GET /api/brains/<brain_id>
+Get a brain with its videos.
+- Response: `{ "success": true, "brain": { ...brain fields, "videos": [...], "thumbnailVideoIds": [...] } }`
+
+#### PUT /api/brains/<brain_id>
+Update brain name and/or description.
+- Body: `{ "name?": "...", "description?": "..." }`
+
+#### DELETE /api/brains/<brain_id>
+Delete a brain and its video associations. Videos are not deleted.
+
+#### POST /api/brains/<brain_id>/videos
+Add a single video to a brain.
+- Body: `{ "videoId": "..." }`
+
+#### DELETE /api/brains/<brain_id>/videos/<video_id>
+Remove a video from a brain.
+
+#### POST /api/brains/<brain_id>/videos/bulk
+Add multiple videos to a brain at once.
+- Body: `{ "videoIds": ["...", "..."] }`
+
+#### POST /api/brains/<brain_id>/chat
+Stream a chat response scoped to a brain's knowledge base (SSE).
+- Body: `{ "message": "...", "history": [...] }`
+- Context: vector search post-filtered to brain's videos, falls back to brain's summaries
+
+#### GET /api/brains/suggest/<video_id>
+Get suggested brains for a video based on embedding similarity.
+- Response: `{ "success": true, "suggestions": [{ "id", "name", "similarity" }] }`
 
 ### Job Endpoints
 
@@ -392,19 +422,21 @@ Default settings seeded on init:
 
 KNN query pattern: `WHERE embedding MATCH ? AND k = ?`
 
-### video_clusters table
-| Column     | Type    | Description                           |
-|------------|---------|---------------------------------------|
-| video_id   | TEXT    | Primary key, foreign key to videos    |
-| cluster_id | INTEGER | Assigned cluster number               |
+### brains table
+| Column      | Type    | Description                           |
+|-------------|---------|---------------------------------------|
+| id          | TEXT    | Primary key (UUID)                    |
+| name        | TEXT    | Brain name (max 100 chars)            |
+| description | TEXT    | Optional description (max 500 chars)  |
+| created_at  | TEXT    | Creation timestamp                    |
+| updated_at  | TEXT    | Last update timestamp                 |
 
-### cluster_labels table
-| Column     | Type    | Description                           |
-|------------|---------|---------------------------------------|
-| cluster_id | INTEGER | Primary key                           |
-| label      | TEXT    | Gemini-generated topic label          |
-| video_count| INTEGER | Number of videos in this cluster      |
-| updated_at | TEXT    | Last update timestamp                 |
+### brain_videos table
+| Column    | Type    | Description                                    |
+|-----------|---------|------------------------------------------------|
+| brain_id  | TEXT    | Foreign key to brains (composite PK)           |
+| video_id  | TEXT    | Foreign key to videos (composite PK)           |
+| added_at  | TEXT    | When video was added to brain                  |
 
 ## Running the Application
 
@@ -509,21 +541,15 @@ environment:
 - [x] Profile section merged into Settings page with editable name/subtitle and collection statistics
 - [x] Profile name and subtitle stored in database settings table
 - [x] Settings/stats API endpoints (GET/PUT /api/settings, GET /api/stats)
-- [x] Add `sqlite-vec` for vector search and `scikit-learn` for clustering
+- [x] Add `sqlite-vec` for vector search
 - [x] Create `embedding_service.py` — transcript chunking, Gemini embedding (768-dim), sqlite-vec KNN search
 - [x] Create `transcript_chunks` + `vec_chunks` tables for vector storage
 - [x] Auto-embed transcripts after transcription completes (in background thread)
 - [x] Semantic search endpoint (`GET /api/search?q=...`) with vector similarity
 - [x] Upgrade chat RAG — replaced LIKE search with vector similarity in `chat_with_knowledge_base()`
 - [x] Embedding management endpoints (`POST /api/embeddings/build`, `POST /api/embeddings/rebuild`, `GET /api/embeddings/status`)
-- [x] Create `clustering_service.py` — k-means over per-video mean embeddings + Gemini cluster labeling
-- [x] Cluster API endpoints (`POST /api/clusters/build`, `GET /api/clusters`, `GET /api/clusters/<id>/videos`)
 - [x] Search bar in videos page header (debounced semantic search with results view)
-- [x] Topics page with topic card grid, thumbnail mosaics, expandable video lists
-- [x] Topics nav item added to sidebar (between Videos and Settings)
 - [x] Embeddings status section in Settings page (embedded/pending/chunks stats + Build Embeddings button)
-- [x] Topics page redesign — replaced card grid with scrollable topic groups, all videos always visible
-- [x] Functional transcript/summary actions in Topics view (View, Summarize, Summary toggle, Transcribe with polling)
 - [x] Removed unused ProfilePage.jsx (profile merged into Settings)
 - [x] Rebuild all embeddings endpoint (`POST /api/embeddings/rebuild`) + "Rebuild All" button in Settings
 - [x] Structured summarization prompt (FAQ-style tech extraction: Project Overview, Tech Stack, Architecture, etc.)
@@ -538,6 +564,12 @@ environment:
 - [x] Delete transcript — trash icon replaces retranscribe, `DELETE /api/transcripts/<video_id>` cascade deletes transcript + embeddings + summary
 - [x] Embedding warning in Settings — amber alert banner when unembedded transcripts exist, pending count highlighted
 - [x] Removed `utils/import_json_to_db.py` (no longer needed)
+- [x] AI Brains — curated knowledge bases with brain-scoped RAG chat, video management, auto-assign
+- [x] Brain-scoped chat with embedded YouTube player and clickable timestamps
+- [x] Clickable timestamps in global chat drawer (ChatDrawer) with embedded player
+- [x] Shared `chatUtils.jsx` for timestamp parsing/rendering across ChatDrawer and BrainsPage
+- [x] Auto-assign videos to matching brains after transcription (>0.85 similarity)
+- [x] Removed Topics/clustering feature (replaced by Brains)
 
 ### Future Tasks
 
@@ -557,7 +589,7 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 **Sidebar** (`position: sticky`, not `fixed` — must stay in grid flow to avoid overlapping main content):
 - Always visible on desktop, hidden on mobile ≤900px (hamburger toggle)
 - Top: App brand/title with video icon
-- Middle: Videos, Topics nav items
+- Middle: Videos, Brains nav items
 - Bottom (pinned via `margin-top: auto`): Settings
 - Active item highlighted with blue text + right border accent
 
@@ -584,13 +616,15 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 4. **Vector Embeddings**: Embedded/Pending/Chunks stats + "Build Embeddings" button + "Rebuild All" button (clears and re-embeds). Amber warning banner when unembedded transcripts exist.
 5. **API Key Status**: Read-only status indicators (green/red dots)
 
-**Topics Page** — cluster-based topic grouping (all topics visible):
-- Header with "Build Topics" / "Rebuild Topics" button
-- All topic groups displayed as scrollable rows — each group has a heading (label + video count) followed by its full video list
-- Each video row: thumbnail, title + channel, transcript actions (View, provider badge, delete transcript, Summarize with type dropdown, Summary toggle + re-summarize, Transcribe with polling)
-- Self-contained: manages its own summary states, transcription polling, transcript deletion, and TranscriptModal
+**Brains Page** — curated AI knowledge bases:
+- Brain list view: card grid with thumbnail mosaics, name, description, video count
+- "+ New Brain" button → modal with name + description fields
+- Brain detail view: back button, brain name/description, video count, delete button
+- Two tabs: **Videos** (add/remove videos, view transcripts) and **Chat** (brain-scoped RAG with embedded YouTube player + clickable timestamps)
+- "Add Videos" modal with search filter, checkbox multi-select, bulk add
+- Self-contained: manages its own chat state, YouTube player, TranscriptModal
 
-**Chat Drawer**: Blue FAB (bottom-right) → expands to 420x500px chat panel with streaming responses
+**Chat Drawer**: Blue FAB (bottom-right) → expands to 420x500px chat panel with streaming responses + embedded YouTube player + clickable timestamps
 
 ### Transcription Architecture
 - **No Celery/Redis** — uses Python `threading.Thread` for background jobs (sufficient for single-user Docker app)
@@ -609,7 +643,6 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - **Summaries**: reads transcript from DB → sends to Gemini with selected prompt type → stores result in `transcripts.summary` column. Two modes: `structured` (FAQ-style tech extraction) and `narrative` (2-4 paragraph prose). Supports re-summarization (overwrites previous summary).
 - **Chat (RAG)**: embeds user message → KNN search over transcript chunks via sqlite-vec → falls back to summaries → streams response via SSE
 - **Embeddings**: `gemini-embedding-001` model, 768-dim output (`output_dimensionality=768`), batched via `genai.embed_content()`
-- **Cluster labeling**: sends video titles/summaries per cluster to Gemini for short topic label generation
 - **System instruction**: passed when constructing `GenerativeModel` instance (not in `generate_content()`)
 - **SSE streaming**: Flask `Response` with `stream_with_context` + `text/event-stream` mimetype; frontend reads via `ReadableStream`
 - **Gunicorn**: `--workers 2 --threads 4 --timeout 120` (gthread worker for SSE support)
@@ -624,12 +657,12 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - **Bulk embed** — `POST /api/embeddings/build` processes all unembedded transcripts
 - **Cost** — Gemini embedding free tier: 1,500 req/day; each request can batch multiple texts
 
-### Topic Clustering
-- **scikit-learn** `KMeans` over per-video mean embedding vectors
-- **Auto k** — `min(max(3, sqrt(n_videos)), 15)` clusters
-- **Labels** — Gemini generates 2-5 word topic label per cluster from video titles/summaries
-- **Tables** — `video_clusters` (assignments) + `cluster_labels` (labels + counts)
-- **Rebuild** — `POST /api/clusters/build` clears old clusters and regenerates
+### AI Brains
+- **Brain model** — `Brain` class in `models.py` with full CRUD + video management (add/remove/bulk/get)
+- **Brain-scoped RAG** — `brain_service.py` does KNN search over vec_chunks, post-filters to brain's video IDs (sqlite-vec can't filter during KNN)
+- **Auto-assign** — after transcription completes, `auto_assign_video()` compares new video's mean embedding to each brain's mean embedding via cosine similarity; assigns if >0.85
+- **Suggest** — `GET /api/brains/suggest/<video_id>` returns brains with >0.75 similarity for manual assignment
+- **Tables** — `brains` (id, name, description) + `brain_videos` (brain_id, video_id, added_at)
 
 ### YouTube Thumbnail URL Pattern
 ```
@@ -647,9 +680,9 @@ https://img.youtube.com/vi/{videoId}/mqdefault.jpg
 ### Page Navigation
 - **No router library** — uses React state (`activePage`) to switch between pages
 - `App.jsx` renders `<Sidebar>` + `<main>` in a CSS Grid; sidebar calls `setActivePage` on click
-- Pages: `'videos'` (default), `'topics'`, `'settings'` — conditional rendering in `<main>`
+- Pages: `'videos'` (default), `'brains'`, `'settings'` — conditional rendering in `<main>`
 - Videos page includes debounced semantic search bar (400ms) — when active, replaces video list with search results
-- Topics page loads all clusters and their videos on mount (parallel fetch), supports build/rebuild
+- Brains page manages its own state (brain list, detail view, chat, YouTube player)
 - Videos data stays in state when switching pages (no re-fetch on return)
 - Settings page fetches settings, stats, and embedding status on mount via `Promise.all` in `useEffect`
 

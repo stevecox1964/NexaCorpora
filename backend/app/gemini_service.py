@@ -110,8 +110,9 @@ def chat_with_knowledge_base(user_message, conversation_history=None):
             context_parts = []
             for r in results:
                 title = r.get('video_title', 'Unknown')
+                video_id = r.get('video_id', '')
                 content = r.get('content', '')
-                context_parts.append(f"=== Video: {title} ===\n{content}")
+                context_parts.append(f"=== Video: {title} (videoId: {video_id}) ===\n{content}")
             context = "\n\n".join(context_parts)
     except Exception:
         pass
@@ -123,7 +124,7 @@ def chat_with_knowledge_base(user_message, conversation_history=None):
             context_parts = []
             for s in summaries:
                 context_parts.append(
-                    f"Video: {s['video_title']} (by {s['channel_name']})\n"
+                    f"Video: {s['video_title']} (videoId: {s['video_id']}, by {s['channel_name']})\n"
                     f"Summary: {s['summary']}"
                 )
             context = "\n\n".join(context_parts)
@@ -135,6 +136,11 @@ def chat_with_knowledge_base(user_message, conversation_history=None):
         "of YouTube video transcripts. Use the following transcript context to answer "
         "the user's question. If the context doesn't contain relevant information, say so "
         "honestly. Always mention which video(s) your answer is based on when applicable.\n\n"
+        "IMPORTANT: When citing specific timestamps from a video, use this exact format: "
+        "[M:SS](videoId) — for example [7:11](dQw4w9WgXcQ). This allows the user to click "
+        "the timestamp to jump to that moment in the video. Always use the videoId provided "
+        "in the context header for each video. For timestamp ranges, format each timestamp "
+        "separately, e.g. [7:11](abc123) to [8:07](abc123).\n\n"
         f"Knowledge Base Context:\n{context}"
     )
 
