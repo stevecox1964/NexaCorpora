@@ -3,7 +3,7 @@ import { apiService } from '../services/api';
 import { renderChatContent } from '../utils/chatUtils';
 import TranscriptModal from './TranscriptModal';
 
-function BrainsPage() {
+function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
   const [brains, setBrains] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -16,6 +16,11 @@ function BrainsPage() {
   const [transcriptView, setTranscriptView] = useState(null);
   const [transcribingJobs, setTranscribingJobs] = useState({});
   const pollIntervals = useRef({});
+
+  // Summary state
+  const [summaryStates, setSummaryStates] = useState({});
+  const [summaryMenuVideoId, setSummaryMenuVideoId] = useState(null);
+  const summaryMenuRef = useRef(null);
 
   // Chat state
   const [chatMessages, setChatMessages] = useState([]);
@@ -42,6 +47,14 @@ function BrainsPage() {
   };
 
   useEffect(() => { loadBrains(); }, []);
+
+  // Handle navigation from video card brain badge
+  useEffect(() => {
+    if (initialBrainId) {
+      handleSelectBrain(initialBrainId);
+      onInitialBrainHandled && onInitialBrainHandled();
+    }
+  }, [initialBrainId]);
 
   // Load brain detail
   const loadBrainDetail = async (brainId) => {
@@ -139,6 +152,70 @@ function BrainsPage() {
       }, 4000);
 
       pollIntervals.current[videoId] = interval;
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // Summary menu outside-click
+  useEffect(() => {
+    if (!summaryMenuVideoId) return;
+    const handleClick = (e) => {
+      if (summaryMenuRef.current && !summaryMenuRef.current.contains(e.target)) {
+        setSummaryMenuVideoId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [summaryMenuVideoId]);
+
+  const handleGenerateSummary = async (videoId, type) => {
+    setSummaryMenuVideoId(null);
+    setSummaryStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], loading: true } }));
+    try {
+      const data = await apiService.generateSummary(videoId, type);
+      const summary = data.transcript?.summary;
+      // Update hasSummary on the video in brainDetail
+      setBrainDetail(prev => prev ? {
+        ...prev,
+        videos: prev.videos.map(v => v.videoId === videoId ? { ...v, hasSummary: true } : v)
+      } : prev);
+      setSummaryStates(prev => ({ ...prev, [videoId]: { expanded: true, content: summary, loading: false } }));
+    } catch (err) {
+      setError(err.message);
+      setSummaryStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], loading: false } }));
+    }
+  };
+
+  const handleToggleSummary = async (videoId) => {
+    const current = summaryStates[videoId];
+    if (current?.expanded) {
+      setSummaryStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], expanded: false } }));
+      return;
+    }
+    if (current?.content) {
+      setSummaryStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], expanded: true } }));
+    } else {
+      setSummaryStates(prev => ({ ...prev, [videoId]: { expanded: false, content: null, loading: true } }));
+      try {
+        const data = await apiService.getSummary(videoId);
+        setSummaryStates(prev => ({ ...prev, [videoId]: { expanded: true, content: data.summary, loading: false } }));
+      } catch (err) {
+        setError(err.message);
+        setSummaryStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], loading: false } }));
+      }
+    }
+  };
+
+  const handleClearSummary = async (videoId) => {
+    if (!confirm('Clear the accumulated summary for this video?')) return;
+    try {
+      await apiService.clearSummary(videoId);
+      setBrainDetail(prev => prev ? {
+        ...prev,
+        videos: prev.videos.map(v => v.videoId === videoId ? { ...v, hasSummary: false } : v)
+      } : prev);
+      setSummaryStates(prev => { const n = { ...prev }; delete n[videoId]; return n; });
     } catch (err) {
       setError(err.message);
     }
@@ -380,8 +457,11 @@ function BrainsPage() {
             </div>
           ) : (
             <div className="topic-videos-list">
-              {brainDetail.videos.map(video => (
-                <div key={video.videoId} className="topic-video-row">
+              {brainDetail.videos.map(video => {
+                const ss = summaryStates[video.videoId];
+                return (
+                <React.Fragment key={video.videoId}>
+                <div className="topic-video-row">
                   <a
                     className="topic-video-thumbnail"
                     href={`https://www.youtube.com/watch?v=${video.videoId}`}
@@ -421,6 +501,65 @@ function BrainsPage() {
                             {video.transcriptProvider === 'assemblyai' ? 'AAI' : 'Gemini'}
                           </span>
                         )}
+                        {video.hasSummary ? (
+                          <>
+                            <button
+                              className="btn btn-sm btn-secondary"
+                              onClick={() => handleToggleSummary(video.videoId)}
+                              title="Toggle Summary"
+                            >
+                              {ss?.expanded ? 'Hide' : 'Summary'}
+                            </button>
+                            <div className="summary-menu-wrapper" ref={summaryMenuVideoId === video.videoId ? summaryMenuRef : null}>
+                              <button
+                                className="btn btn-sm btn-icon"
+                                onClick={() => setSummaryMenuVideoId(summaryMenuVideoId === video.videoId ? null : video.videoId)}
+                                disabled={ss?.loading}
+                                title="Re-summarize"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="23 4 23 10 17 10" />
+                                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                                </svg>
+                              </button>
+                              {summaryMenuVideoId === video.videoId && (
+                                <div className="summary-type-menu">
+                                  <button onClick={() => handleGenerateSummary(video.videoId, 'structured')}>Structured</button>
+                                  <button onClick={() => handleGenerateSummary(video.videoId, 'narrative')}>Narrative</button>
+                                  <button onClick={() => handleGenerateSummary(video.videoId, 'faq')}>FAQ Extraction</button>
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              className="btn btn-sm btn-icon"
+                              onClick={() => handleClearSummary(video.videoId)}
+                              title="Clear Summary"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          </>
+                        ) : (
+                          <div className="summary-menu-wrapper" ref={summaryMenuVideoId === video.videoId ? summaryMenuRef : null}>
+                            <button
+                              className="btn btn-sm btn-secondary"
+                              onClick={() => setSummaryMenuVideoId(summaryMenuVideoId === video.videoId ? null : video.videoId)}
+                              disabled={ss?.loading}
+                              title="Generate Summary"
+                            >
+                              {ss?.loading ? 'Summarizing...' : 'Summarize'}
+                            </button>
+                            {summaryMenuVideoId === video.videoId && !ss?.loading && (
+                              <div className="summary-type-menu">
+                                <button onClick={() => handleGenerateSummary(video.videoId, 'structured')}>Structured</button>
+                                <button onClick={() => handleGenerateSummary(video.videoId, 'narrative')}>Narrative</button>
+                                <button onClick={() => handleGenerateSummary(video.videoId, 'faq')}>FAQ Extraction</button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </>
                     ) : transcribingJobs[video.videoId] ? (
                       <span className="status-indicator transcribing">
@@ -447,7 +586,14 @@ function BrainsPage() {
                     </button>
                   </div>
                 </div>
-              ))}
+                {ss?.expanded && ss?.content && (
+                  <div className="video-summary-row">
+                    <div className="video-summary-content">{ss.content}</div>
+                  </div>
+                )}
+                </React.Fragment>
+                );
+              })}
             </div>
           )}
         </div>

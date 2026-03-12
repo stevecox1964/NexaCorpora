@@ -301,6 +301,35 @@ body {
   color: #717171;
 }
 
+.video-brain-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.brain-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(147, 51, 234, 0.15);
+  border: 1px solid rgba(147, 51, 234, 0.3);
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #c084fc;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.brain-badge:hover {
+  background: rgba(147, 51, 234, 0.3);
+}
+
+.brain-badge svg {
+  flex-shrink: 0;
+}
+
 /* Transcript Column */
 .video-row-transcript {
   display: flex;

@@ -18,13 +18,21 @@ def get_gemini_model(system_instruction=None):
     return genai.GenerativeModel(model_name)
 
 
+SECTION_HEADERS = {
+    'structured': '--- Structured Summary ---',
+    'narrative': '--- Narrative Summary ---',
+    'faq': '--- FAQ Extraction ---',
+}
+
+
 def generate_summary(video_id, summary_type='structured'):
     """Generate a summary for a video's transcript using Gemini.
 
     Reads the transcript from the database (no re-downloading),
-    sends it to Gemini, and stores the result.
+    sends it to Gemini, and appends the result to the existing summary.
 
-    summary_type: 'structured' for FAQ-style extraction, 'narrative' for prose summary.
+    summary_type: 'structured', 'narrative', or 'faq'.
+    Each type appends with a section header rather than overwriting.
     """
     transcript = Transcript.get_by_video_id(video_id)
     if not transcript:
@@ -37,11 +45,32 @@ def generate_summary(video_id, summary_type='structured'):
 
     model = get_gemini_model()
 
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+
     if summary_type == 'narrative':
         prompt = (
             "Summarize the following YouTube video transcript in 2-4 concise paragraphs. "
             "Include the key topics, main arguments, and any notable conclusions.\n\n"
-            f"Video Title: {video_title}\n\n"
+            f"Video Title: {video_title}\n"
+            f"Video URL: {video_url}\n\n"
+            f"Transcript:\n{transcript['content']}"
+        )
+    elif summary_type == 'faq':
+        prompt = (
+            "Extract frequently asked questions and their answers from the following YouTube video transcript. "
+            "Identify the key questions that a viewer might have after watching this video, and provide clear, "
+            "concise answers based on the transcript content.\n\n"
+            "Return the response in this format:\n\n"
+            f"Source: {video_title}\n"
+            f"{video_url}\n\n"
+            "## Frequently Asked Questions\n\n"
+            "**Q: [Question]?**\n"
+            "A: [Answer]\n\n"
+            "Generate 5-10 Q&A pairs covering the most important topics discussed. "
+            "If the video covers technical content, include technical questions. "
+            "Keep answers factual and based only on what was discussed in the transcript.\n\n"
+            f"Video Title: {video_title}\n"
+            f"Video URL: {video_url}\n\n"
             f"Transcript:\n{transcript['content']}"
         )
     else:
@@ -83,12 +112,23 @@ def generate_summary(video_id, summary_type='structured'):
             "## Known Issues / Limitations\n\n"
             "If a category is not mentioned, state \"Not specified.\"\n"
             "Do not summarize the transcript narratively. Only extract structured facts.\n\n"
-            f"Video Title: {video_title}\n\n"
+            f"Video Title: {video_title}\n"
+            f"Video URL: {video_url}\n\n"
             f"Transcript:\n{transcript['content']}"
         )
 
     response = model.generate_content(prompt)
-    summary_text = response.text
+    new_text = response.text
+
+    # Append with section header instead of overwriting
+    header = SECTION_HEADERS.get(summary_type, SECTION_HEADERS['structured'])
+    section = f"{header}\n\n{new_text}"
+
+    existing = transcript.get('summary') or ''
+    if existing.strip():
+        summary_text = f"{existing}\n\n{section}"
+    else:
+        summary_text = section
 
     updated = Transcript.update_summary(video_id, summary_text)
     return updated, None

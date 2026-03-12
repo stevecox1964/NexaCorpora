@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-function VideoCard({ video, onDelete, onTranscribe, onDeleteTranscript, onViewTranscript, onGenerateSummary, onToggleSummary, summaryState }) {
+function VideoCard({ video, onDelete, onTranscribe, onDeleteTranscript, onViewTranscript, onGenerateSummary, onClearSummary, onToggleSummary, onNavigateToBrain, summaryState }) {
   const thumbnailUrl = `https://img.youtube.com/vi/${video.videoId}/mqdefault.jpg`;
   const [showSummaryMenu, setShowSummaryMenu] = useState(false);
   const menuRef = useRef(null);
@@ -67,6 +67,24 @@ function VideoCard({ video, onDelete, onTranscribe, onDeleteTranscript, onViewTr
             )}
           </p>
           <span className="video-row-date">Saved: {formatDate(video.scrapedAt)}</span>
+          {video.brains && video.brains.length > 0 && (
+            <div className="video-brain-badges">
+              {video.brains.map(brain => (
+                <button
+                  key={brain.id}
+                  className="brain-badge"
+                  onClick={() => onNavigateToBrain && onNavigateToBrain(brain.id)}
+                  title={`Go to brain: ${brain.name}`}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 2a8 8 0 0 0-8 8c0 3.5 2 6 4 7.5V20h8v-2.5c2-1.5 4-4 4-7.5a8 8 0 0 0-8-8z" />
+                    <path d="M9 22h6" />
+                  </svg>
+                  <span>{brain.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Transcript Column */}
@@ -125,9 +143,22 @@ function VideoCard({ video, onDelete, onTranscribe, onDeleteTranscript, onViewTr
                       <div className="summary-type-menu">
                         <button onClick={() => handleSummarize('structured')}>Structured</button>
                         <button onClick={() => handleSummarize('narrative')}>Narrative</button>
+                        <button onClick={() => handleSummarize('faq')}>FAQ Extraction</button>
                       </div>
                     )}
                   </div>
+                  {onClearSummary && (
+                    <button
+                      className="btn btn-sm btn-icon"
+                      onClick={() => onClearSummary(video.videoId)}
+                      title="Clear Summary"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  )}
                 </>
               ) : (
                 <div className="summary-menu-wrapper" ref={menuRef}>
@@ -143,6 +174,7 @@ function VideoCard({ video, onDelete, onTranscribe, onDeleteTranscript, onViewTr
                     <div className="summary-type-menu">
                       <button onClick={() => handleSummarize('structured')}>Structured</button>
                       <button onClick={() => handleSummarize('narrative')}>Narrative</button>
+                      <button onClick={() => handleSummarize('faq')}>FAQ Extraction</button>
                     </div>
                   )}
                 </div>

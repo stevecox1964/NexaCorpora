@@ -79,9 +79,19 @@ def add_video():
 
     try:
         video = Video.create(data)
+
+        # Auto-assign to brains by channel name
+        assigned_brains = []
+        try:
+            from .brain_service import auto_assign_by_channel
+            assigned_brains = auto_assign_by_channel(data['videoId'])
+        except Exception:
+            pass  # Non-fatal
+
         return jsonify({
             'success': True,
-            'video': video
+            'video': video,
+            'assignedBrains': assigned_brains
         }), 201
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -310,7 +320,7 @@ def generate_summary(video_id):
         from .gemini_service import generate_summary as gen_summary
         data = request.get_json(silent=True) or {}
         summary_type = data.get('summaryType', 'structured')
-        if summary_type not in ('structured', 'narrative'):
+        if summary_type not in ('structured', 'narrative', 'faq'):
             summary_type = 'structured'
         result, error = gen_summary(video_id, summary_type=summary_type)
         if error:
@@ -333,6 +343,16 @@ def get_summary(video_id):
         'summary': transcript.get('summary'),
         'videoId': video_id
     })
+
+
+@bp.route('/summaries/<video_id>', methods=['DELETE'])
+def clear_summary(video_id):
+    """Clear the accumulated summary for a video."""
+    transcript = Transcript.get_by_video_id(video_id)
+    if not transcript:
+        return jsonify({'success': False, 'error': 'Transcript not found'}), 404
+    Transcript.update_summary(video_id, None)
+    return jsonify({'success': True, 'message': f'Summary cleared for {video_id}'})
 
 
 @bp.route('/summaries/bulk', methods=['POST'])

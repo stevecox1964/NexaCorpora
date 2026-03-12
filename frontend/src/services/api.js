@@ -194,6 +194,17 @@ class ApiService {
     return response.json();
   }
 
+  // Clear summary for a video
+  async clearSummary(videoId) {
+    const response = await fetch(`${API_BASE}/summaries/${videoId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      throw new Error('Failed to clear summary');
+    }
+    return response.json();
+  }
+
   // Bulk generate summaries for all transcripts without one
   async generateBulkSummaries() {
     const response = await fetch(`${API_BASE}/summaries/bulk`, {

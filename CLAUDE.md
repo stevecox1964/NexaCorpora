@@ -15,9 +15,10 @@ chrome-extension/background.js
   [scrapes video metadata from YouTube DOM]
      ↓ POST http://localhost:5000/api/videos
 backend/app/routes.py → models.py → SQLite (Docker volume: backend/data/)
+     ↓ auto_assign_by_channel() checks if any brain has videos from same channel → assigns
      ↓
 BookMarkManager React UI at http://localhost:5000
-  [video appears in the list]
+  [video appears in the list, with brain badge if auto-assigned]
 ```
 
 ### Transcription Flow
@@ -48,18 +49,22 @@ Delete transcript: trash icon on video row → DELETE /api/transcripts/<video_id
 
 ### Summarization Flow
 ```
-User clicks "Summarize" button on a video row → dropdown: "Structured" or "Narrative"
-     ↓ POST /api/summaries/<video_id> { summaryType: "structured" | "narrative" }
+User clicks "Summarize" button on a video row → dropdown: "Structured", "Narrative", or "FAQ Extraction"
+     ↓ POST /api/summaries/<video_id> { summaryType: "structured" | "narrative" | "faq" }
 routes.py → gemini_service.py
   [reads transcript from DB, sends to Gemini with selected prompt]
      ↓
   Structured: FAQ-style tech extraction (Project Overview, Tech Stack, Architecture, etc.)
   Narrative: 2-4 paragraph prose summary
+  FAQ: 5-10 Q&A pairs with video URL source link
      ↓
-Summary stored in transcripts.summary column (overwrites previous)
+Each type appends to existing summary with section header (--- Type Summary ---)
+Multiple types accumulate — user can generate one, two, or all three
      ↓
-Frontend shows expandable summary inline on the video row
-Re-summarize: refresh icon next to existing summary → pick type → regenerates
+Frontend shows expandable summary inline on the video row (both Videos page and Brain detail)
+Re-summarize: refresh icon next to existing summary → pick type → appends
+Clear summary: X button to reset accumulated summary
+Delete: DELETE /api/summaries/<video_id> clears the summary field
 ```
 
 ### Chat Flow (RAG with Vector Search)
@@ -106,7 +111,8 @@ brain_service.py
      ↓
 Frontend Brains page: card grid → detail view with Videos + Chat tabs
 Chat tab includes embedded YouTube player with clickable timestamps
-Auto-assign: after transcription, videos auto-assigned to brains with >0.85 similarity
+Auto-assign: channel-based on video add + embedding-based after transcription (>0.85 similarity)
+Summary UI: same Summarize/Summary/Re-summarize/Clear controls as main Videos page
 ```
 
 ## Architecture
@@ -195,8 +201,9 @@ Each video includes `hasTranscript` (boolean), `hasSummary` (boolean), `transcri
 ```
 
 #### POST /api/videos
-Add a new video bookmark.
+Add a new video bookmark. Auto-assigns to brains that contain videos from the same channel.
 - Body: `{ "videoId", "videoTitle", "channelId?", "channelName?", "channelUrl?", "videoUrl?", "scrapedAt?" }`
+- Response includes `assignedBrains` (list of brain names the video was auto-assigned to)
 
 #### GET /api/videos/<video_id>
 Get a single video by videoId.
@@ -232,16 +239,21 @@ Start a background transcription job. Uses the provider configured in the settin
 ### Summary Endpoints
 
 #### POST /api/summaries/<video_id>
-Generate (or regenerate) a summary for a video's transcript using Gemini.
-- Body (optional): `{ "summaryType": "structured" | "narrative" }` (default: `"structured"`)
+Generate a summary for a video's transcript using Gemini. Each type appends to the existing summary with a section header.
+- Body (optional): `{ "summaryType": "structured" | "narrative" | "faq" }` (default: `"structured"`)
   - `structured`: FAQ-style technical extraction (Project Overview, Tech Stack, Architecture, DevOps, Features, Monetization, Known Issues)
   - `narrative`: 2-4 paragraph prose summary
-- Overwrites any existing summary (supports re-summarization).
+  - `faq`: 5-10 Q&A pairs with video URL source link
+- Appends with `--- Type Summary ---` header (accumulates multiple types).
 - Response: `{ "success": true, "transcript": { "videoId", "content", "summary", "indexedAt" } }`
 
 #### GET /api/summaries/<video_id>
 Get the stored summary for a video.
 - Response: `{ "success": true, "summary": "...", "videoId": "..." }`
+
+#### DELETE /api/summaries/<video_id>
+Clear the accumulated summary for a video.
+- Response: `{ "success": true, "message": "Summary cleared for <video_id>" }`
 
 #### POST /api/summaries/bulk
 Generate summaries for all transcripts that don't have one yet.
@@ -570,6 +582,14 @@ environment:
 - [x] Shared `chatUtils.jsx` for timestamp parsing/rendering across ChatDrawer and BrainsPage
 - [x] Auto-assign videos to matching brains after transcription (>0.85 similarity)
 - [x] Removed Topics/clustering feature (replaced by Brains)
+- [x] Multi-type accumulating summaries — Structured, Narrative, FAQ Extraction append with section headers instead of overwriting
+- [x] FAQ Extraction summary type — 5-10 Q&A pairs with video URL source link
+- [x] Clear summary endpoint (`DELETE /api/summaries/<video_id>`) + X button in UI
+- [x] Video URL included in all summary prompts for source attribution
+- [x] Summary UI in Brain detail Videos tab — full Summarize/Summary/Re-summarize/Clear controls
+- [x] Channel-based auto-assign — new videos auto-added to brains that have videos from the same channel
+- [x] Brain badges on video rows — purple pills showing brain membership, clickable to navigate to brain
+- [x] Brain navigation from video list — clicking brain badge switches to Brains page and auto-selects brain
 
 ### Future Tasks
 
@@ -597,7 +617,7 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 | Thumbnail (160x90) | Video Info | Transcript | Actions |
 
 - **Thumbnail**: 160x90px, links to YouTube
-- **Video Info**: Title, Channel name, Saved date
+- **Video Info**: Title, Channel name, Saved date, Brain badges (purple pills, clickable → navigates to brain)
 - **Transcript**: Status indicator + action
   - Green "View" button (clickable) → opens TranscriptModal
   - Provider badge ("AAI" in blue or "Gemini" in purple) — shows which service transcribed
@@ -620,9 +640,11 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - Brain list view: card grid with thumbnail mosaics, name, description, video count
 - "+ New Brain" button → modal with name + description fields
 - Brain detail view: back button, brain name/description, video count, delete button
-- Two tabs: **Videos** (add/remove videos, view transcripts) and **Chat** (brain-scoped RAG with embedded YouTube player + clickable timestamps)
+- Two tabs: **Videos** (add/remove videos, view transcripts, summarize) and **Chat** (brain-scoped RAG with embedded YouTube player + clickable timestamps)
+- Videos tab includes full summary UI: Summarize/Summary toggle/Re-summarize dropdown (Structured/Narrative/FAQ)/Clear button/expandable summary row
 - "Add Videos" modal with search filter, checkbox multi-select, bulk add
-- Self-contained: manages its own chat state, YouTube player, TranscriptModal
+- Accepts `initialBrainId` prop for navigation from video card brain badges
+- Self-contained: manages its own chat state, summary state, YouTube player, TranscriptModal
 
 **Chat Drawer**: Blue FAB (bottom-right) → expands to 420x500px chat panel with streaming responses + embedded YouTube player + clickable timestamps
 
@@ -660,7 +682,10 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 ### AI Brains
 - **Brain model** — `Brain` class in `models.py` with full CRUD + video management (add/remove/bulk/get)
 - **Brain-scoped RAG** — `brain_service.py` does KNN search over vec_chunks, post-filters to brain's video IDs (sqlite-vec can't filter during KNN)
-- **Auto-assign** — after transcription completes, `auto_assign_video()` compares new video's mean embedding to each brain's mean embedding via cosine similarity; assigns if >0.85
+- **Auto-assign (channel)** — on video add, `auto_assign_by_channel()` matches channel name against existing brain videos; immediate, no embeddings needed
+- **Auto-assign (embedding)** — after transcription completes, `auto_assign_video()` compares new video's mean embedding to each brain's mean embedding via cosine similarity; assigns if >0.85
+- **Brain badges** — main video list shows purple brain badges per video (clickable → navigates to brain detail)
+- **Brain membership** — `GET /api/videos` returns `video.brains` array (list of `{id, name}`) via `Brain.get_brains_for_video()`
 - **Suggest** — `GET /api/brains/suggest/<video_id>` returns brains with >0.75 similarity for manual assignment
 - **Tables** — `brains` (id, name, description) + `brain_videos` (brain_id, video_id, added_at)
 

@@ -204,6 +204,50 @@ def suggest_brains_for_video(video_id, threshold=0.75):
     return suggestions
 
 
+def auto_assign_by_channel(video_id):
+    """Auto-assign a video to brains that already contain videos from the same channel.
+
+    Called immediately when a video is added (before transcription/embeddings exist).
+    Uses channel name matching against existing brain video membership.
+    """
+    from .models import Video
+    video = Video.get_by_video_id(video_id)
+    if not video or not video.get('channelName'):
+        return []
+
+    channel_name = video['channelName'].strip().lower()
+    if not channel_name:
+        return []
+
+    db = get_db()
+    brains_all = Brain.get_all()
+    assigned = []
+
+    for brain in brains_all:
+        # Check if this brain already has this video
+        video_ids = Brain.get_video_ids(brain['id'])
+        if video_id in video_ids:
+            continue
+        if not video_ids:
+            continue
+
+        # Get distinct channel names in this brain
+        placeholders = ','.join('?' * len(video_ids))
+        rows = db.execute(f'''
+            SELECT DISTINCT LOWER(TRIM(channel_name)) as cn
+            FROM videos
+            WHERE video_id IN ({placeholders}) AND channel_name IS NOT NULL
+        ''', video_ids).fetchall()
+
+        brain_channels = {row['cn'] for row in rows}
+        if channel_name in brain_channels:
+            Brain.add_video(brain['id'], video_id)
+            assigned.append(brain['name'])
+            logger.info(f'Channel-assigned video {video_id} to brain "{brain["name"]}" (channel: {video["channelName"]})')
+
+    return assigned
+
+
 def auto_assign_video(video_id, auto_threshold=0.85):
     """Auto-assign a video to brains with high similarity. Returns assigned brain names."""
     suggestions = suggest_brains_for_video(video_id, threshold=auto_threshold)

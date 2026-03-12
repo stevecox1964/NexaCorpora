@@ -24,6 +24,7 @@ function App() {
     has_next: false
   });
   const [activePage, setActivePage] = useState('videos');
+  const [initialBrainId, setInitialBrainId] = useState(null);
   const [summaryStates, setSummaryStates] = useState({});
 
   // Search state
@@ -218,6 +219,28 @@ function App() {
         [videoId]: { ...prev[videoId], loading: false }
       }));
     }
+  };
+
+  const handleClearSummary = async (videoId) => {
+    if (!confirm('Clear the accumulated summary for this video?')) return;
+    try {
+      await apiService.clearSummary(videoId);
+      setVideos(prev => prev.map(v =>
+        v.videoId === videoId ? { ...v, hasSummary: false } : v
+      ));
+      setSummaryStates(prev => {
+        const next = { ...prev };
+        delete next[videoId];
+        return next;
+      });
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleNavigateToBrain = (brainId) => {
+    setInitialBrainId(brainId);
+    setActivePage('brains');
   };
 
   const handleToggleSummary = async (videoId) => {
@@ -467,7 +490,9 @@ function App() {
                       onDeleteTranscript={handleDeleteTranscript}
                       onViewTranscript={(videoId, videoTitle) => setTranscriptView({ videoId, videoTitle })}
                       onGenerateSummary={handleGenerateSummary}
+                      onClearSummary={handleClearSummary}
                       onToggleSummary={handleToggleSummary}
+                      onNavigateToBrain={handleNavigateToBrain}
                       summaryState={summaryStates[video.videoId]}
                     />
                   ))}
@@ -507,7 +532,7 @@ function App() {
           </>
         )}
 
-        {activePage === 'brains' && <BrainsPage />}
+        {activePage === 'brains' && <BrainsPage initialBrainId={initialBrainId} onInitialBrainHandled={() => setInitialBrainId(null)} />}
 
         {activePage === 'settings' && <SettingsPage />}
 
