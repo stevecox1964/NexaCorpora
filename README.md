@@ -7,15 +7,16 @@ A self-hosted app for saving and managing YouTube video bookmarks with built-in 
 - **Save YouTube videos** via the Chrome extension or the web UI
 - **Transcribe videos** using yt-dlp + AssemblyAI or Gemini Audio, with real-time status polling and provider badges
 - **View transcripts** in-app with an embedded YouTube player and clickable timestamps
-- **AI-powered summaries** — generate structured (FAQ-style) or narrative summaries with Google Gemini, displayed inline as expandable rows
+- **AI-powered summaries** — generate Structured, Narrative, or FAQ Extraction summaries with Google Gemini; multiple types accumulate with section headers; displayed inline as expandable rows
 - **Bulk summarize** — "Summarize All" button generates summaries for all transcribed videos at once
 - **Semantic search** — vector similarity search across transcript chunks using Gemini embeddings + sqlite-vec
-- **AI Brains** — curated knowledge bases: group videos into brains, chat with brain-scoped RAG context, auto-assign videos after transcription
+- **AI Brains** — curated knowledge bases: group videos into brains, chat with brain-scoped RAG context, full summary UI, auto-assign by channel and after transcription, brain badges on video rows
 - **Chat with your videos** — RAG-powered chat drawer with SSE streaming, embedded YouTube player, and clickable timestamps
 - **Delete & re-manage transcripts** — delete transcripts (cascades to embeddings + summary), re-transcribe with a different provider
 - **Import bookmarks** from Chrome
 - **Configurable settings** — choose transcription provider, Gemini model, manage embeddings, and customize your profile
-- **Paginated list view** with thumbnails, video info, transcript/summary status, and actions
+- **Brain badges** — video rows show purple pills for brain membership, clickable to navigate directly to the brain
+- **Paginated list view** with thumbnails, video info, transcript/summary status, brain badges, and actions
 
 ## Quick Start
 
@@ -124,8 +125,8 @@ BookMarkManager/
 - **Transcription** runs in a background thread: yt-dlp downloads audio, AssemblyAI or Gemini transcribes it with `[M:SS]` timestamps, and the frontend polls for status updates. Transcripts are auto-embedded for vector search after completion.
 - **Embeddings** use Gemini's `gemini-embedding-001` model (768-dim) to embed transcript chunks into a sqlite-vec virtual table for KNN similarity search
 - **Semantic search** embeds the query via Gemini, runs KNN against the vector store, and returns the best-matching transcript chunks grouped by video
-- **AI Brains** let you group videos into curated knowledge bases with brain-scoped RAG chat. Videos are auto-assigned to matching brains after transcription (>0.85 cosine similarity).
-- **Summarization** reads transcripts from the DB, sends them to Gemini with a structured or narrative prompt, and stores the result
+- **AI Brains** let you group videos into curated knowledge bases with brain-scoped RAG chat and full summary controls. Videos are auto-assigned to brains by channel name on save, and by embedding similarity (>0.85) after transcription. Brain badges on video rows link back to the brain detail view.
+- **Summarization** supports three types (Structured, Narrative, FAQ Extraction) that accumulate with section headers. FAQ summaries include video URL source links. Available on both the Videos page and within Brain detail views.
 - **Chat (RAG)** retrieves the top-k matching transcript chunks via vector search (falls back to summaries), passes them as context to Gemini, and streams the response via SSE
 - **Data** is persisted in a SQLite database on a Docker volume (`backend/data/`)
 
@@ -145,8 +146,9 @@ BookMarkManager/
 | `DELETE` | `/api/transcripts/<id>` | Delete transcript (cascades to embeddings + summary) |
 | `GET` | `/api/transcripts/<id>/status` | Check transcript status |
 | `GET` | `/api/transcripts/search?q=` | Search transcripts (text) |
-| `POST` | `/api/summaries/<id>` | Generate summary via Gemini |
+| `POST` | `/api/summaries/<id>` | Generate summary via Gemini (structured/narrative/faq) |
 | `GET` | `/api/summaries/<id>` | Get stored summary |
+| `DELETE` | `/api/summaries/<id>` | Clear accumulated summary |
 | `POST` | `/api/summaries/bulk` | Summarize all un-summarized transcripts |
 | `POST` | `/api/chat` | Stream chat response (SSE, RAG) |
 | `GET` | `/api/search?q=` | Semantic vector search |
