@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { apiService } from '../services/api';
+import { saveToFile } from '../utils/saveToFile';
 
 function parseTimestampToSeconds(timestamp) {
   const parts = timestamp.split(':').map(Number);
@@ -200,6 +201,13 @@ function TranscriptModal({ videoId, videoTitle, onClose }) {
             <div className="transcript-modal-actions">
               <button className="btn btn-sm btn-secondary" onClick={handleCopy}>
                 Copy to Clipboard
+              </button>
+              <button
+                className="btn btn-sm btn-secondary"
+                onClick={() => saveToFile(`${videoTitle}\nhttps://www.youtube.com/watch?v=${videoId}\n\n${transcript.content}`, 'transcript')}
+                title="Save transcript to file"
+              >
+                Save to File
               </button>
               {hasTimestamps && !playerVisible && (
                 <button

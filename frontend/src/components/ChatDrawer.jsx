@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { apiService } from '../services/api';
 import { renderChatContent } from '../utils/chatUtils';
+import { saveToFile } from '../utils/saveToFile';
 
 function ChatDrawer() {
   const [isOpen, setIsOpen] = useState(false);
@@ -174,6 +175,17 @@ function ChatDrawer() {
       <div className="chat-drawer-header">
         <span className="chat-drawer-title">Chat with Knowledge Base</span>
         <div className="chat-drawer-header-actions">
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={() => {
+              const text = messages.map(m => `[${m.role === 'user' ? 'You' : 'Assistant'}]\n${m.content}`).join('\n\n');
+              saveToFile(text, 'chat');
+            }}
+            disabled={isStreaming || messages.length === 0}
+            title="Save chat to file"
+          >
+            Save
+          </button>
           <button className="btn btn-sm btn-secondary" onClick={handleClear} disabled={isStreaming}>
             Clear
           </button>

@@ -1748,6 +1748,14 @@ button.status-indicator.clickable:hover {
   border: 1px solid #252525;
 }
 
+.brain-chat-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #252525;
+  justify-content: flex-end;
+}
+
 .brain-chat-messages {
   flex: 1;
   overflow-y: auto;

@@ -129,7 +129,9 @@ def run_transcription_job(app, job_id, video_id, api_key, provider='assemblyai')
                 Job.update_status(job_id, 'failed', 'Transcription returned empty text')
                 return
 
-            # Step 3: Store transcript
+            # Step 3: Store transcript (prepend video URL for reference)
+            video_url = video.get('videoUrl', f"https://www.youtube.com/watch?v={video_id}")
+            text = f"Video: {video.get('videoTitle', video_id)}\n{video_url}\n\n{text}"
             Transcript.create(video_id, text, provider=provider)
             Job.update_status(job_id, 'completed')
             logger.info(f'Transcription complete for {video_id}')

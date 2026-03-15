@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { apiService } from '../services/api';
 import { renderChatContent } from '../utils/chatUtils';
+import { saveToFile } from '../utils/saveToFile';
 import TranscriptModal from './TranscriptModal';
 
 function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
@@ -343,6 +344,46 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
     }
   };
 
+  const [bulkDownloading, setBulkDownloading] = useState(false);
+
+  const handleBulkDownload = async () => {
+    if (!brainDetail?.videos?.length || bulkDownloading) return;
+    setBulkDownloading(true);
+    try {
+      for (const video of brainDetail.videos) {
+        const sanitized = video.videoTitle.replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/\s+/g, '_').slice(0, 60);
+        const videoUrl = `https://www.youtube.com/watch?v=${video.videoId}`;
+
+        // Download transcript if available
+        if (video.hasTranscript) {
+          try {
+            const data = await apiService.getTranscript(video.videoId);
+            if (data.transcript?.content) {
+              const header = `${video.videoTitle}\n${videoUrl}\nChannel: ${video.channelName || 'Unknown'}\n\n`;
+              saveToFile(header + data.transcript.content, `transcript_${sanitized}`);
+            }
+          } catch (e) { /* skip */ }
+        }
+
+        // Download summary if available
+        if (video.hasSummary) {
+          try {
+            const data = await apiService.getSummary(video.videoId);
+            if (data.summary) {
+              const header = `${video.videoTitle}\n${videoUrl}\nChannel: ${video.channelName || 'Unknown'}\n\n`;
+              saveToFile(header + data.summary, `summary_${sanitized}`);
+            }
+          } catch (e) { /* skip */ }
+        }
+
+        // Small delay between downloads so browser doesn't block them
+        await new Promise(r => setTimeout(r, 300));
+      }
+    } finally {
+      setBulkDownloading(false);
+    }
+  };
+
   // Render brain list
   if (!selectedBrainId) {
     return (
@@ -447,6 +488,14 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
             <button className="btn btn-sm btn-secondary" onClick={() => setShowAddVideos(true)}>
               + Add Videos
             </button>
+            <button
+              className="btn btn-sm btn-secondary"
+              onClick={handleBulkDownload}
+              disabled={bulkDownloading || !brainDetail?.videos?.length}
+              title="Download all transcripts and summaries as separate files"
+            >
+              {bulkDownloading ? 'Downloading...' : 'Download All Content'}
+            </button>
           </div>
 
           {detailLoading ? (
@@ -530,6 +579,19 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
                                 </div>
                               )}
                             </div>
+                            {ss?.content && (
+                              <button
+                                className="btn btn-sm btn-icon"
+                                onClick={() => saveToFile(`${video.videoTitle}\nhttps://www.youtube.com/watch?v=${video.videoId}\n\n${ss.content}`, 'summary')}
+                                title="Save Summary to File"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                  <polyline points="7 10 12 15 17 10" />
+                                  <line x1="12" y1="15" x2="12" y2="3" />
+                                </svg>
+                              </button>
+                            )}
                             <button
                               className="btn btn-sm btn-icon"
                               onClick={() => handleClearSummary(video.videoId)}
@@ -601,6 +663,27 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
 
       {activeTab === 'chat' && (
         <div className="brain-chat">
+          <div className="brain-chat-toolbar">
+            <button
+              className="btn btn-sm btn-secondary"
+              onClick={() => {
+                const header = `Brain: ${brainDetail?.name || 'Unknown'}\n\n`;
+                const text = chatMessages.map(m => `[${m.role === 'user' ? 'You' : 'Assistant'}]\n${m.content}`).join('\n\n');
+                saveToFile(header + text, 'chat');
+              }}
+              disabled={chatStreaming || chatMessages.length === 0}
+              title="Save chat to file"
+            >
+              Save Chat
+            </button>
+            <button
+              className="btn btn-sm btn-secondary"
+              onClick={() => { setChatMessages([]); closePlayer(); }}
+              disabled={chatStreaming}
+            >
+              Clear
+            </button>
+          </div>
           {playerVideoId && (
             <div className="chat-player-wrapper">
               <div id="yt-player-brain"></div>

@@ -122,7 +122,7 @@ def generate_summary(video_id, summary_type='structured'):
 
     # Append with section header instead of overwriting
     header = SECTION_HEADERS.get(summary_type, SECTION_HEADERS['structured'])
-    section = f"{header}\n\n{new_text}"
+    section = f"{header}\nVideo: {video_title}\n{video_url}\n\n{new_text}"
 
     existing = transcript.get('summary') or ''
     if existing.strip():

@@ -6,16 +6,17 @@ A self-hosted app for saving and managing YouTube video bookmarks with built-in 
 
 - **Save YouTube videos** via the Chrome extension or the web UI
 - **Transcribe videos** using yt-dlp + AssemblyAI or Gemini Audio, with real-time status polling and provider badges
-- **View transcripts** in-app with an embedded YouTube player and clickable timestamps
-- **AI-powered summaries** — generate Structured, Narrative, or FAQ Extraction summaries with Google Gemini; multiple types accumulate with section headers; displayed inline as expandable rows
+- **View transcripts** in-app with an embedded YouTube player and clickable timestamps; save to file
+- **AI-powered summaries** — generate Structured, Narrative, or FAQ Extraction summaries with Google Gemini; multiple types accumulate with section headers and embedded video URLs; displayed inline as expandable rows; save individual summaries to file
 - **Bulk summarize** — "Summarize All" button generates summaries for all transcribed videos at once
 - **Semantic search** — vector similarity search across transcript chunks using Gemini embeddings + sqlite-vec
-- **AI Brains** — curated knowledge bases: group videos into brains, chat with brain-scoped RAG context, full summary UI, auto-assign by channel and after transcription, brain badges on video rows
-- **Chat with your videos** — RAG-powered chat drawer with SSE streaming, embedded YouTube player, and clickable timestamps
+- **AI Brains** — curated knowledge bases: group videos into brains, chat with brain-scoped RAG context, full summary UI, auto-assign by channel and after transcription, brain badges on video rows, bulk download all transcripts and summaries
+- **Chat with your videos** — RAG-powered chat drawer with SSE streaming, embedded YouTube player, clickable timestamps, and save conversation to file
 - **Delete & re-manage transcripts** — delete transcripts (cascades to embeddings + summary), re-transcribe with a different provider
 - **Import bookmarks** from Chrome
 - **Configurable settings** — choose transcription provider, Gemini model, manage embeddings, and customize your profile
 - **Brain badges** — video rows show purple pills for brain membership, clickable to navigate directly to the brain
+- **Save content to file** — download transcripts, summaries, and chat conversations as `.txt` files with datetime-stamped filenames
 - **Paginated list view** with thumbnails, video info, transcript/summary status, brain badges, and actions
 
 ## Quick Start
@@ -93,7 +94,8 @@ BookMarkManager/
 │   │   ├── services/
 │   │   │   └── api.js               # API service layer (fetch + SSE streaming)
 │   │   ├── utils/
-│   │   │   └── chatUtils.jsx        # Shared timestamp parsing + rendering for chat messages
+│   │   │   ├── chatUtils.jsx        # Shared timestamp parsing + rendering for chat messages
+│   │   │   └── saveToFile.js        # Browser download utility (Blob + createObjectURL)
 │   │   └── App.jsx                  # Main app: sidebar layout, search, video list, polling
 │   └── package.json
 ├── backend/                         # Flask API + SQLite + sqlite-vec
@@ -122,11 +124,12 @@ BookMarkManager/
 
 - **Frontend** is built at Docker image build time and served as static files by Flask
 - **Backend** exposes a REST API under `/api/*` and serves the SPA for all other routes
-- **Transcription** runs in a background thread: yt-dlp downloads audio, AssemblyAI or Gemini transcribes it with `[M:SS]` timestamps, and the frontend polls for status updates. Transcripts are auto-embedded for vector search after completion.
+- **Transcription** runs in a background thread: yt-dlp downloads audio, AssemblyAI or Gemini transcribes it with `[M:SS]` timestamps, and the frontend polls for status updates. Stored transcripts include the video title and YouTube URL as a header. Transcripts are auto-embedded for vector search after completion.
 - **Embeddings** use Gemini's `gemini-embedding-001` model (768-dim) to embed transcript chunks into a sqlite-vec virtual table for KNN similarity search
 - **Semantic search** embeds the query via Gemini, runs KNN against the vector store, and returns the best-matching transcript chunks grouped by video
-- **AI Brains** let you group videos into curated knowledge bases with brain-scoped RAG chat and full summary controls. Videos are auto-assigned to brains by channel name on save, and by embedding similarity (>0.85) after transcription. Brain badges on video rows link back to the brain detail view.
-- **Summarization** supports three types (Structured, Narrative, FAQ Extraction) that accumulate with section headers. FAQ summaries include video URL source links. Available on both the Videos page and within Brain detail views.
+- **AI Brains** let you group videos into curated knowledge bases with brain-scoped RAG chat and full summary controls. Videos are auto-assigned to brains by channel name on save, and by embedding similarity (>0.85) after transcription. Brain badges on video rows link back to the brain detail view. "Download All Content" exports every transcript and summary in the brain as separate files.
+- **Summarization** supports three types (Structured, Narrative, FAQ Extraction) that accumulate with section headers. Each section header embeds the video title and YouTube URL for source attribution. Available on both the Videos page and within Brain detail views.
+- **Save to file** — transcripts, summaries, and chat conversations can be downloaded as `.txt` files. Filenames follow the pattern `{type}_{datetime}.txt` (e.g., `transcript_2026-03-15_14-30-00.txt`). All saved files include the video title and YouTube URL as a header.
 - **Chat (RAG)** retrieves the top-k matching transcript chunks via vector search (falls back to summaries), passes them as context to Gemini, and streams the response via SSE
 - **Data** is persisted in a SQLite database on a Docker volume (`backend/data/`)
 

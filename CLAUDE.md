@@ -35,13 +35,13 @@ Background thread:
   2. Provider-specific transcription (both produce [M:SS] timestamps):
      - AssemblyAI: SDK uploads audio + transcribes → get_sentences() for timestamps
      - Gemini Audio: uploads via genai.upload_file() + generate_content() with timestamp prompt
-  3. Stores transcript text + provider name in SQLite transcripts table
+  3. Prepends video title + YouTube URL, stores transcript text + provider name in SQLite transcripts table
   4. Updates job status → "completed"
   5. Auto-embeds transcript chunks for vector search (non-fatal if it fails)
   6. Cleans up temp files
      ↓
 Frontend sees "completed" → shows green "View" button + provider badge (AAI/Gemini)
-User clicks "View" → TranscriptModal with embedded YouTube player + clickable timestamps
+User clicks "View" → TranscriptModal with embedded YouTube player + clickable timestamps + Save to File
 
 Delete transcript: trash icon on video row → DELETE /api/transcripts/<video_id>
   [deletes transcript + summary + embeddings (cascade), Transcribe button reappears]
@@ -59,12 +59,14 @@ routes.py → gemini_service.py
   FAQ: 5-10 Q&A pairs with video URL source link
      ↓
 Each type appends to existing summary with section header (--- Type Summary ---)
+Each section header includes video title + YouTube URL for source attribution
 Multiple types accumulate — user can generate one, two, or all three
      ↓
 Frontend shows expandable summary inline on the video row (both Videos page and Brain detail)
 Re-summarize: refresh icon next to existing summary → pick type → appends
 Clear summary: X button to reset accumulated summary
 Delete: DELETE /api/summaries/<video_id> clears the summary field
+Save: download icon → saves summary to file with video title + URL header
 ```
 
 ### Chat Flow (RAG with Vector Search)
@@ -82,6 +84,7 @@ routes.py → gemini_service.py
      ↓
 Frontend reads SSE stream, displays tokens in real-time
 Conversation history maintained in React state (resets on reload)
+Save button exports full conversation to file (chat_{datetime}.txt)
 ```
 
 ### Embedding Flow
@@ -112,7 +115,8 @@ brain_service.py
 Frontend Brains page: card grid → detail view with Videos + Chat tabs
 Chat tab includes embedded YouTube player with clickable timestamps
 Auto-assign: channel-based on video add + embedding-based after transcription (>0.85 similarity)
-Summary UI: same Summarize/Summary/Re-summarize/Clear controls as main Videos page
+Summary UI: same Summarize/Summary/Re-summarize/Clear/Save controls as main Videos page
+Bulk download: "Download All Content" button exports all transcripts + summaries as separate files
 ```
 
 ## Architecture
@@ -139,7 +143,8 @@ BookMarkManager/
 │   │   ├── services/
 │   │   │   └── api.js               # API service layer (all fetch calls + SSE streaming)
 │   │   ├── utils/
-│   │   │   └── chatUtils.jsx        # Shared timestamp parsing + rendering for chat messages
+│   │   │   ├── chatUtils.jsx        # Shared timestamp parsing + rendering for chat messages
+│   │   │   └── saveToFile.js        # Browser download utility (Blob + createObjectURL)
 │   │   └── App.jsx                  # Main app: sidebar layout, page switching, video list, transcription polling
 │   └── package.json
 ├── backend/                  # Python Flask API
@@ -590,6 +595,13 @@ environment:
 - [x] Channel-based auto-assign — new videos auto-added to brains that have videos from the same channel
 - [x] Brain badges on video rows — purple pills showing brain membership, clickable to navigate to brain
 - [x] Brain navigation from video list — clicking brain badge switches to Brains page and auto-selects brain
+- [x] Save to file — `saveToFile.js` utility: browser download via Blob + createObjectURL with `{type}_{datetime}.txt` naming
+- [x] Save transcript to file — "Save to File" button in TranscriptModal (includes video title + YouTube URL header)
+- [x] Save summary to file — download icon button on expanded summary rows (Videos page + Brains page)
+- [x] Save chat to file — "Save" button in ChatDrawer header + "Save Chat" button in Brain chat toolbar
+- [x] Bulk download brain content — "Download All Content" button in Brain detail Videos toolbar, downloads each video's transcript + summary as separate files
+- [x] Video URL embedded in stored transcripts — prepended as header line on transcription
+- [x] Video URL embedded in stored summaries — each summary section header includes video title + YouTube URL
 
 ### Future Tasks
 
@@ -623,8 +635,9 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
   - Provider badge ("AAI" in blue or "Gemini" in purple) — shows which service transcribed
   - Trash icon button → deletes transcript + summary + embeddings (confirmation prompt)
   - "Summary" / "Hide" toggle button (when summary exists) → expands inline summary
-  - Refresh icon button (when summary exists) → dropdown to re-summarize as "Structured" or "Narrative"
-  - "Summarize" button (when transcript exists but no summary) → dropdown: "Structured" or "Narrative"
+  - Refresh icon button (when summary exists) → dropdown to re-summarize as "Structured", "Narrative", or "FAQ"
+  - Download icon button (when summary content loaded) → saves summary to file
+  - "Summarize" button (when transcript exists but no summary) → dropdown: "Structured", "Narrative", or "FAQ"
   - Yellow spinner + "Downloading..." / "Transcribing..." (during active job)
   - Gray "None" + "Transcribe" button (no transcript yet)
 - **Actions**: Remove button
@@ -641,12 +654,13 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - "+ New Brain" button → modal with name + description fields
 - Brain detail view: back button, brain name/description, video count, delete button
 - Two tabs: **Videos** (add/remove videos, view transcripts, summarize) and **Chat** (brain-scoped RAG with embedded YouTube player + clickable timestamps)
-- Videos tab includes full summary UI: Summarize/Summary toggle/Re-summarize dropdown (Structured/Narrative/FAQ)/Clear button/expandable summary row
+- Videos tab includes full summary UI: Summarize/Summary toggle/Re-summarize dropdown (Structured/Narrative/FAQ)/Save/Clear button/expandable summary row
+- Videos toolbar: "+ Add Videos" button + "Download All Content" button (bulk exports all transcripts + summaries as separate files)
 - "Add Videos" modal with search filter, checkbox multi-select, bulk add
 - Accepts `initialBrainId` prop for navigation from video card brain badges
 - Self-contained: manages its own chat state, summary state, YouTube player, TranscriptModal
 
-**Chat Drawer**: Blue FAB (bottom-right) → expands to 420x500px chat panel with streaming responses + embedded YouTube player + clickable timestamps
+**Chat Drawer**: Blue FAB (bottom-right) → expands to 420x500px chat panel with streaming responses + embedded YouTube player + clickable timestamps + Save/Clear buttons
 
 ### Transcription Architecture
 - **No Celery/Redis** — uses Python `threading.Thread` for background jobs (sufficient for single-user Docker app)
@@ -662,7 +676,7 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 ### Gemini Integration
 - **google-generativeai** Python SDK (`>=0.8.0`) — note: this SDK is deprecated (EOL Nov 2025); migration to `google-genai` is a future task
 - **Model**: configurable via `GEMINI_MODEL` env var, defaults to `gemini-2.5-flash`
-- **Summaries**: reads transcript from DB → sends to Gemini with selected prompt type → stores result in `transcripts.summary` column. Two modes: `structured` (FAQ-style tech extraction) and `narrative` (2-4 paragraph prose). Supports re-summarization (overwrites previous summary).
+- **Summaries**: reads transcript from DB → sends to Gemini with selected prompt type → stores result in `transcripts.summary` column. Three modes: `structured` (FAQ-style tech extraction), `narrative` (2-4 paragraph prose), and `faq` (5-10 Q&A pairs with source URL). Each section header embeds video title + URL. Supports accumulating re-summarization.
 - **Chat (RAG)**: embeds user message → KNN search over transcript chunks via sqlite-vec → falls back to summaries → streams response via SSE
 - **Embeddings**: `gemini-embedding-001` model, 768-dim output (`output_dimensionality=768`), batched via `genai.embed_content()`
 - **System instruction**: passed when constructing `GenerativeModel` instance (not in `generate_content()`)
