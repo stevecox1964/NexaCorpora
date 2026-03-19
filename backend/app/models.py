@@ -34,6 +34,7 @@ class Video:
             SELECT v.*,
                    (t.id IS NOT NULL) AS has_transcript,
                    (t.summary IS NOT NULL AND t.summary != '') AS has_summary,
+                   (t.faq IS NOT NULL AND t.faq != '') AS has_faq,
                    t.provider AS transcript_provider,
                    j.status AS job_status
             FROM videos v
@@ -117,6 +118,8 @@ class Video:
             result['hasTranscript'] = bool(row['has_transcript'])
         if 'has_summary' in row.keys():
             result['hasSummary'] = bool(row['has_summary'])
+        if 'has_faq' in row.keys():
+            result['hasFaq'] = bool(row['has_faq'])
         if 'transcript_provider' in row.keys():
             result['transcriptProvider'] = row['transcript_provider']
         if 'job_status' in row.keys():
@@ -169,6 +172,13 @@ class Transcript:
         return Transcript.get_by_video_id(video_id)
 
     @staticmethod
+    def update_faq(video_id, faq):
+        db = get_db()
+        db.execute('UPDATE transcripts SET faq = ? WHERE video_id = ?', (faq, video_id))
+        db.commit()
+        return Transcript.get_by_video_id(video_id)
+
+    @staticmethod
     def delete(video_id):
         db = get_db()
         # Delete embeddings first (vec_chunks references transcript_chunks)
@@ -186,10 +196,11 @@ class Transcript:
     def get_all_summaries():
         db = get_db()
         cursor = db.execute('''
-            SELECT t.video_id, t.summary, v.video_title, v.channel_name
+            SELECT t.video_id, t.summary, t.faq, v.video_title, v.channel_name
             FROM transcripts t
             JOIN videos v ON t.video_id = v.video_id
-            WHERE t.summary IS NOT NULL AND t.summary != ''
+            WHERE (t.summary IS NOT NULL AND t.summary != '')
+               OR (t.faq IS NOT NULL AND t.faq != '')
             ORDER BY v.scraped_at DESC
         ''')
         return [dict(row) for row in cursor.fetchall()]
@@ -206,6 +217,8 @@ class Transcript:
         }
         if 'summary' in row.keys():
             result['summary'] = row['summary']
+        if 'faq' in row.keys():
+            result['faq'] = row['faq']
         if 'provider' in row.keys():
             result['provider'] = row['provider']
         if 'video_title' in row.keys():
@@ -324,6 +337,7 @@ class Brain:
             SELECT v.*,
                    (t.id IS NOT NULL) AS has_transcript,
                    (t.summary IS NOT NULL AND t.summary != '') AS has_summary,
+                   (t.faq IS NOT NULL AND t.faq != '') AS has_faq,
                    t.provider AS transcript_provider
             FROM brain_videos bv
             JOIN videos v ON v.video_id = bv.video_id

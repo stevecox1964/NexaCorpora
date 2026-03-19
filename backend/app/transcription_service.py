@@ -133,10 +133,22 @@ def run_transcription_job(app, job_id, video_id, api_key, provider='assemblyai')
             video_url = video.get('videoUrl', f"https://www.youtube.com/watch?v={video_id}")
             text = f"Video: {video.get('videoTitle', video_id)}\n{video_url}\n\n{text}"
             Transcript.create(video_id, text, provider=provider)
-            Job.update_status(job_id, 'completed')
             logger.info(f'Transcription complete for {video_id}')
 
-            # Step 4: Auto-embed transcript chunks for vector search
+            # Step 4: Generate summary + FAQ
+            Job.update_status(job_id, 'summarizing')
+            logger.info(f'Generating summary and FAQ for {video_id}')
+            try:
+                from .gemini_service import generate_summary, generate_faq
+                generate_summary(video_id)
+                generate_faq(video_id)
+                logger.info(f'Summary and FAQ generated for {video_id}')
+            except Exception as sum_err:
+                logger.warning(f'Summary/FAQ generation failed for {video_id} (non-fatal): {sum_err}')
+
+            Job.update_status(job_id, 'completed')
+
+            # Step 5: Auto-embed transcript chunks for vector search
             try:
                 from .embedding_service import embed_video
                 count = embed_video(video_id)

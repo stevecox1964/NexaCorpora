@@ -92,21 +92,24 @@ def get_brain_context(brain_id, query_text, k=8):
             db = get_db()
             placeholders = ','.join('?' * len(video_ids))
             rows = db.execute(f'''
-                SELECT t.video_id, t.summary, v.video_title, v.channel_name
+                SELECT t.video_id, t.summary, t.faq, v.video_title, v.channel_name
                 FROM transcripts t
                 JOIN videos v ON t.video_id = v.video_id
                 WHERE t.video_id IN ({placeholders})
-                  AND t.summary IS NOT NULL AND t.summary != ''
+                  AND ((t.summary IS NOT NULL AND t.summary != '')
+                    OR (t.faq IS NOT NULL AND t.faq != ''))
                 ORDER BY v.scraped_at DESC
             ''', video_ids).fetchall()
 
             if rows:
                 context_parts = []
                 for s in rows:
-                    context_parts.append(
-                        f"Video: {s['video_title']} (videoId: {s['video_id']}, "
-                        f"by {s['channel_name']})\nSummary: {s['summary']}"
-                    )
+                    parts = [f"Video: {s['video_title']} (videoId: {s['video_id']}, by {s['channel_name']})"]
+                    if s['summary']:
+                        parts.append(f"Summary: {s['summary']}")
+                    if s['faq']:
+                        parts.append(f"FAQ: {s['faq']}")
+                    context_parts.append("\n".join(parts))
                 context = "\n\n".join(context_parts)
 
     if not context:

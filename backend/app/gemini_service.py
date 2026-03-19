@@ -18,22 +18,8 @@ def get_gemini_model(system_instruction=None):
     return genai.GenerativeModel(model_name)
 
 
-SECTION_HEADERS = {
-    'structured': '--- Structured Summary ---',
-    'narrative': '--- Narrative Summary ---',
-    'faq': '--- FAQ Extraction ---',
-}
-
-
-def generate_summary(video_id, summary_type='structured'):
-    """Generate a summary for a video's transcript using Gemini.
-
-    Reads the transcript from the database (no re-downloading),
-    sends it to Gemini, and appends the result to the existing summary.
-
-    summary_type: 'structured', 'narrative', or 'faq'.
-    Each type appends with a section header rather than overwriting.
-    """
+def generate_summary(video_id):
+    """Generate a short 2-4 sentence narrative summary for a video's transcript."""
     transcript = Transcript.get_by_video_id(video_id)
     if not transcript:
         return None, 'Transcript not found'
@@ -42,95 +28,57 @@ def generate_summary(video_id, summary_type='structured'):
 
     video = Video.get_by_video_id(video_id)
     video_title = video['videoTitle'] if video else 'Unknown'
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
 
     model = get_gemini_model()
 
-    video_url = f"https://www.youtube.com/watch?v={video_id}"
-
-    if summary_type == 'narrative':
-        prompt = (
-            "Summarize the following YouTube video transcript in 2-4 concise paragraphs. "
-            "Include the key topics, main arguments, and any notable conclusions.\n\n"
-            f"Video Title: {video_title}\n"
-            f"Video URL: {video_url}\n\n"
-            f"Transcript:\n{transcript['content']}"
-        )
-    elif summary_type == 'faq':
-        prompt = (
-            "Extract frequently asked questions and their answers from the following YouTube video transcript. "
-            "Identify the key questions that a viewer might have after watching this video, and provide clear, "
-            "concise answers based on the transcript content.\n\n"
-            "Return the response in this format:\n\n"
-            f"Source: {video_title}\n"
-            f"{video_url}\n\n"
-            "## Frequently Asked Questions\n\n"
-            "**Q: [Question]?**\n"
-            "A: [Answer]\n\n"
-            "Generate 5-10 Q&A pairs covering the most important topics discussed. "
-            "If the video covers technical content, include technical questions. "
-            "Keep answers factual and based only on what was discussed in the transcript.\n\n"
-            f"Video Title: {video_title}\n"
-            f"Video URL: {video_url}\n\n"
-            f"Transcript:\n{transcript['content']}"
-        )
-    else:
-        prompt = (
-            "You are a technical documentation generator. "
-            "Analyze the transcript and extract structured FAQ-style technical information.\n"
-            "Return the response in this format:\n\n"
-            "## Project Overview\n"
-            "- Name:\n"
-            "- Purpose:\n"
-            "- Target Users:\n\n"
-            "## Tech Stack\n"
-            "- Operating System:\n"
-            "- Programming Languages:\n"
-            "- Backend Framework:\n"
-            "- Frontend Framework:\n"
-            "- UI Library:\n"
-            "- Database:\n"
-            "- APIs Used:\n"
-            "- AI Models Used:\n"
-            "- Cloud Provider:\n"
-            "- Deployment Platform:\n\n"
-            "## Architecture\n"
-            "- Pattern Used:\n"
-            "- Infrastructure:\n"
-            "- Authentication:\n"
-            "- Data Storage Strategy:\n\n"
-            "## DevOps\n"
-            "- CI/CD:\n"
-            "- Containerization:\n"
-            "- Environment Variables Mentioned:\n\n"
-            "## Features\n"
-            "- Core Features:\n"
-            "- Integrations:\n"
-            "- Security Features:\n\n"
-            "## Monetization\n"
-            "- Pricing Model:\n"
-            "- Subscription / Credits / Pay-per-use:\n\n"
-            "## Known Issues / Limitations\n\n"
-            "If a category is not mentioned, state \"Not specified.\"\n"
-            "Do not summarize the transcript narratively. Only extract structured facts.\n\n"
-            f"Video Title: {video_title}\n"
-            f"Video URL: {video_url}\n\n"
-            f"Transcript:\n{transcript['content']}"
-        )
+    prompt = (
+        "Summarize the following YouTube video transcript in 2-4 concise sentences. "
+        "Cover the main topic, key points, and conclusion. Be brief and direct.\n\n"
+        f"Video Title: {video_title}\n"
+        f"Video URL: {video_url}\n\n"
+        f"Transcript:\n{transcript['content']}"
+    )
 
     response = model.generate_content(prompt)
-    new_text = response.text
+    updated = Transcript.update_summary(video_id, response.text)
+    return updated, None
 
-    # Append with section header instead of overwriting
-    header = SECTION_HEADERS.get(summary_type, SECTION_HEADERS['structured'])
-    section = f"{header}\nVideo: {video_title}\n{video_url}\n\n{new_text}"
 
-    existing = transcript.get('summary') or ''
-    if existing.strip():
-        summary_text = f"{existing}\n\n{section}"
-    else:
-        summary_text = section
+def generate_faq(video_id):
+    """Generate FAQ Q&A pairs from a video's transcript."""
+    transcript = Transcript.get_by_video_id(video_id)
+    if not transcript:
+        return None, 'Transcript not found'
+    if not transcript.get('content'):
+        return None, 'Transcript has no content'
 
-    updated = Transcript.update_summary(video_id, summary_text)
+    video = Video.get_by_video_id(video_id)
+    video_title = video['videoTitle'] if video else 'Unknown'
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+    model = get_gemini_model()
+
+    prompt = (
+        "Extract frequently asked questions and their answers from the following YouTube video transcript. "
+        "Identify the key questions that a viewer might have after watching this video, and provide clear, "
+        "concise answers based on the transcript content.\n\n"
+        "Return the response in this format:\n\n"
+        f"Source: {video_title}\n"
+        f"{video_url}\n\n"
+        "## Frequently Asked Questions\n\n"
+        "**Q: [Question]?**\n"
+        "A: [Answer]\n\n"
+        "Generate 5-10 Q&A pairs covering the most important topics discussed. "
+        "If the video covers technical content, include technical questions. "
+        "Keep answers factual and based only on what was discussed in the transcript.\n\n"
+        f"Video Title: {video_title}\n"
+        f"Video URL: {video_url}\n\n"
+        f"Transcript:\n{transcript['content']}"
+    )
+
+    response = model.generate_content(prompt)
+    updated = Transcript.update_faq(video_id, response.text)
     return updated, None
 
 
@@ -163,10 +111,12 @@ def chat_with_knowledge_base(user_message, conversation_history=None):
         if summaries:
             context_parts = []
             for s in summaries:
-                context_parts.append(
-                    f"Video: {s['video_title']} (videoId: {s['video_id']}, by {s['channel_name']})\n"
-                    f"Summary: {s['summary']}"
-                )
+                parts = [f"Video: {s['video_title']} (videoId: {s['video_id']}, by {s['channel_name']})"]
+                if s.get('summary'):
+                    parts.append(f"Summary: {s['summary']}")
+                if s.get('faq'):
+                    parts.append(f"FAQ: {s['faq']}")
+                context_parts.append("\n".join(parts))
             context = "\n\n".join(context_parts)
         else:
             context = "No transcripts are available in the knowledge base yet."

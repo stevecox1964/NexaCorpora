@@ -312,17 +312,11 @@ def chat():
 # Summary endpoints
 
 @bp.route('/summaries/<video_id>', methods=['POST'])
-def generate_summary(video_id):
-    """Generate a summary for a video's transcript using Gemini.
-    Accepts optional JSON body: { "summaryType": "structured" | "narrative" }
-    """
+def generate_summary_endpoint(video_id):
+    """Generate a short narrative summary for a video's transcript."""
     try:
         from .gemini_service import generate_summary as gen_summary
-        data = request.get_json(silent=True) or {}
-        summary_type = data.get('summaryType', 'structured')
-        if summary_type not in ('structured', 'narrative', 'faq'):
-            summary_type = 'structured'
-        result, error = gen_summary(video_id, summary_type=summary_type)
+        result, error = gen_summary(video_id)
         if error:
             return jsonify({'success': False, 'error': error}), 400
         return jsonify({'success': True, 'transcript': result})
@@ -347,43 +341,76 @@ def get_summary(video_id):
 
 @bp.route('/summaries/<video_id>', methods=['DELETE'])
 def clear_summary(video_id):
-    """Clear the accumulated summary for a video."""
+    """Clear summary and FAQ for a video."""
     transcript = Transcript.get_by_video_id(video_id)
     if not transcript:
         return jsonify({'success': False, 'error': 'Transcript not found'}), 404
     Transcript.update_summary(video_id, None)
-    return jsonify({'success': True, 'message': f'Summary cleared for {video_id}'})
+    Transcript.update_faq(video_id, None)
+    return jsonify({'success': True, 'message': f'Summary and FAQ cleared for {video_id}'})
+
+
+@bp.route('/faq/<video_id>', methods=['GET'])
+def get_faq(video_id):
+    """Get the FAQ for a video."""
+    transcript = Transcript.get_by_video_id(video_id)
+    if not transcript:
+        return jsonify({'success': False, 'error': 'Transcript not found'}), 404
+    return jsonify({
+        'success': True,
+        'faq': transcript.get('faq'),
+        'videoId': video_id
+    })
+
+
+@bp.route('/refresh/<video_id>', methods=['POST'])
+def refresh_summary_faq(video_id):
+    """Regenerate both summary and FAQ for a video (no re-transcription)."""
+    transcript = Transcript.get_by_video_id(video_id)
+    if not transcript:
+        return jsonify({'success': False, 'error': 'Transcript not found'}), 404
+
+    try:
+        from .gemini_service import generate_summary as gen_summary, generate_faq as gen_faq
+        gen_summary(video_id)
+        gen_faq(video_id)
+        updated = Transcript.get_by_video_id(video_id)
+        return jsonify({'success': True, 'transcript': updated})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Refresh failed: {str(e)}'}), 500
 
 
 @bp.route('/summaries/bulk', methods=['POST'])
 def generate_bulk_summaries():
-    """Generate summaries for all transcripts that don't have one."""
+    """Generate summary and FAQ for all transcripts that don't have them."""
     try:
-        from .gemini_service import generate_summary as gen_summary
+        from .gemini_service import generate_summary as gen_summary, generate_faq as gen_faq
 
         all_transcripts = Transcript.search('')  # Get all transcripts
-        to_summarize = []
+        to_process = []
         for t in all_transcripts:
             full = Transcript.get_by_video_id(t['videoId'])
-            if full and not full.get('summary'):
-                to_summarize.append(full)
+            if full and (not full.get('summary') or not full.get('faq')):
+                to_process.append(full)
 
-        if not to_summarize:
+        if not to_process:
             return jsonify({
                 'success': True,
-                'message': 'All transcripts already have summaries',
+                'message': 'All transcripts already have summaries and FAQ',
                 'generated': 0
             })
 
         generated = 0
         errors = []
-        for t in to_summarize:
+        for t in to_process:
             try:
-                result, error = gen_summary(t['videoId'])
-                if error:
-                    errors.append({'videoId': t['videoId'], 'error': error})
-                else:
-                    generated += 1
+                if not t.get('summary'):
+                    gen_summary(t['videoId'])
+                if not t.get('faq'):
+                    gen_faq(t['videoId'])
+                generated += 1
             except Exception as e:
                 errors.append({'videoId': t['videoId'], 'error': str(e)})
 
@@ -391,7 +418,7 @@ def generate_bulk_summaries():
             'success': True,
             'generated': generated,
             'errors': errors,
-            'total': len(to_summarize)
+            'total': len(to_process)
         })
     except ValueError as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -529,11 +556,15 @@ def get_stats():
     total_summaries = db.execute(
         "SELECT COUNT(*) as c FROM transcripts WHERE summary IS NOT NULL AND summary != ''"
     ).fetchone()['c']
+    total_faqs = db.execute(
+        "SELECT COUNT(*) as c FROM transcripts WHERE faq IS NOT NULL AND faq != ''"
+    ).fetchone()['c']
     return jsonify({
         'success': True,
         'totalVideos': total_videos,
         'totalTranscripts': total_transcripts,
-        'totalSummaries': total_summaries
+        'totalSummaries': total_summaries,
+        'totalFaqs': total_faqs
     })
 
 

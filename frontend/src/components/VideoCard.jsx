@@ -1,10 +1,19 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { saveToFile } from '../utils/saveToFile';
+import React from 'react';
 
-function VideoCard({ video, onDelete, onTranscribe, onDeleteTranscript, onViewTranscript, onGenerateSummary, onClearSummary, onToggleSummary, onNavigateToBrain, summaryState }) {
+function VideoCard({
+  video,
+  onDelete,
+  onProcess,
+  onDeleteTranscript,
+  onViewTranscript,
+  onRefreshSummaryFaq,
+  onToggleSummary,
+  onToggleFaq,
+  onNavigateToBrain,
+  summaryState,
+  faqState,
+}) {
   const thumbnailUrl = `https://img.youtube.com/vi/${video.videoId}/mqdefault.jpg`;
-  const [showSummaryMenu, setShowSummaryMenu] = useState(false);
-  const menuRef = useRef(null);
 
   const formatDate = (dateString) => {
     if (!dateString) return 'Unknown date';
@@ -16,26 +25,16 @@ function VideoCard({ video, onDelete, onTranscribe, onDeleteTranscript, onViewTr
     });
   };
 
-  // Close menu on outside click
-  useEffect(() => {
-    if (!showSummaryMenu) return;
-    const handleClick = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
-        setShowSummaryMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [showSummaryMenu]);
-
   const hasTranscript = video.hasTranscript || false;
   const hasSummary = video.hasSummary || false;
+  const hasFaq = video.hasFaq || false;
   const transcriptJobStatus = video.transcriptJobStatus || null;
+  const isProcessing = !!transcriptJobStatus;
 
-  const handleSummarize = (type) => {
-    setShowSummaryMenu(false);
-    onGenerateSummary && onGenerateSummary(video.videoId, type);
-  };
+  const statusText = transcriptJobStatus === 'downloading' ? 'Downloading...' :
+    transcriptJobStatus === 'transcribing' ? 'Transcribing...' :
+    transcriptJobStatus === 'summarizing' ? 'Summarizing...' :
+    transcriptJobStatus ? 'Processing...' : '';
 
   return (
     <>
@@ -88,6 +87,44 @@ function VideoCard({ video, onDelete, onTranscribe, onDeleteTranscript, onViewTr
           )}
         </div>
 
+        {/* Summary Column */}
+        <div className="video-row-summary">
+          {isProcessing && transcriptJobStatus === 'summarizing' ? (
+            <div className="status-indicator transcribing">
+              <span className="spinner" />
+              <span>...</span>
+            </div>
+          ) : hasSummary ? (
+            <button
+              className="btn btn-sm btn-secondary"
+              onClick={() => onToggleSummary && onToggleSummary(video.videoId)}
+            >
+              {summaryState?.expanded ? 'Hide' : 'View'}
+            </button>
+          ) : (
+            <span className="status-none">None</span>
+          )}
+        </div>
+
+        {/* FAQ Column */}
+        <div className="video-row-faq">
+          {isProcessing && transcriptJobStatus === 'summarizing' ? (
+            <div className="status-indicator transcribing">
+              <span className="spinner" />
+              <span>...</span>
+            </div>
+          ) : hasFaq ? (
+            <button
+              className="btn btn-sm btn-secondary"
+              onClick={() => onToggleFaq && onToggleFaq(video.videoId)}
+            >
+              {faqState?.expanded ? 'Hide' : 'View'}
+            </button>
+          ) : (
+            <span className="status-none">None</span>
+          )}
+        </div>
+
         {/* Transcript Column */}
         <div className="video-row-transcript">
           {hasTranscript ? (
@@ -119,113 +156,40 @@ function VideoCard({ video, onDelete, onTranscribe, onDeleteTranscript, onViewTr
                   </svg>
                 </button>
               )}
-              {hasSummary ? (
-                <>
-                  <button
-                    className="btn btn-sm btn-secondary"
-                    onClick={() => onToggleSummary && onToggleSummary(video.videoId)}
-                    title="Toggle Summary"
-                  >
-                    {summaryState?.expanded ? 'Hide' : 'Summary'}
-                  </button>
-                  <div className="summary-menu-wrapper" ref={menuRef}>
-                    <button
-                      className="btn btn-sm btn-icon"
-                      onClick={() => setShowSummaryMenu(!showSummaryMenu)}
-                      disabled={summaryState?.loading}
-                      title="Re-summarize"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="23 4 23 10 17 10" />
-                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                      </svg>
-                    </button>
-                    {showSummaryMenu && (
-                      <div className="summary-type-menu">
-                        <button onClick={() => handleSummarize('structured')}>Structured</button>
-                        <button onClick={() => handleSummarize('narrative')}>Narrative</button>
-                        <button onClick={() => handleSummarize('faq')}>FAQ Extraction</button>
-                      </div>
-                    )}
-                  </div>
-                  {summaryState?.content && (
-                    <button
-                      className="btn btn-sm btn-icon"
-                      onClick={() => saveToFile(`${video.videoTitle}\nhttps://www.youtube.com/watch?v=${video.videoId}\n\n${summaryState.content}`, 'summary')}
-                      title="Save Summary to File"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                    </button>
-                  )}
-                  {onClearSummary && (
-                    <button
-                      className="btn btn-sm btn-icon"
-                      onClick={() => onClearSummary(video.videoId)}
-                      title="Clear Summary"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                      </svg>
-                    </button>
-                  )}
-                </>
-              ) : (
-                <div className="summary-menu-wrapper" ref={menuRef}>
-                  <button
-                    className="btn btn-sm btn-secondary"
-                    onClick={() => setShowSummaryMenu(!showSummaryMenu)}
-                    disabled={summaryState?.loading}
-                    title="Generate Summary"
-                  >
-                    {summaryState?.loading ? 'Summarizing...' : 'Summarize'}
-                  </button>
-                  {showSummaryMenu && !summaryState?.loading && (
-                    <div className="summary-type-menu">
-                      <button onClick={() => handleSummarize('structured')}>Structured</button>
-                      <button onClick={() => handleSummarize('narrative')}>Narrative</button>
-                      <button onClick={() => handleSummarize('faq')}>FAQ Extraction</button>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
-          ) : transcriptJobStatus ? (
+          ) : isProcessing ? (
             <div className="status-indicator transcribing">
               <span className="spinner" />
-              <span>
-                {transcriptJobStatus === 'downloading' ? 'Downloading...' :
-                 transcriptJobStatus === 'transcribing' ? 'Transcribing...' :
-                 'Starting...'}
-              </span>
+              <span>{statusText}</span>
             </div>
           ) : (
-            <>
-              <div className="status-indicator unavailable">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-                <span>None</span>
-              </div>
-              {onTranscribe && (
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={() => onTranscribe(video.videoId)}
-                  title="Transcribe Video"
-                >
-                  Transcribe
-                </button>
-              )}
-            </>
+            <span className="status-none">None</span>
           )}
         </div>
 
         {/* Actions */}
         <div className="video-row-actions">
+          {!hasTranscript && !isProcessing && onProcess && (
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={() => onProcess(video.videoId)}
+              title="Transcribe + Summarize + FAQ"
+            >
+              Process
+            </button>
+          )}
+          {hasTranscript && onRefreshSummaryFaq && (
+            <button
+              className="btn btn-sm btn-icon"
+              onClick={() => onRefreshSummaryFaq(video.videoId)}
+              title="Refresh Summary & FAQ"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="23 4 23 10 17 10" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
+            </button>
+          )}
           <button
             className="btn btn-sm btn-danger"
             onClick={() => onDelete(video.videoId)}
@@ -241,6 +205,15 @@ function VideoCard({ video, onDelete, onTranscribe, onDeleteTranscript, onViewTr
         <div className="video-summary-row">
           <div className="video-summary-content">
             {summaryState.content}
+          </div>
+        </div>
+      )}
+
+      {/* Expandable FAQ row */}
+      {faqState?.expanded && faqState?.content && (
+        <div className="video-faq-row">
+          <div className="video-summary-content">
+            {faqState.content}
           </div>
         </div>
       )}

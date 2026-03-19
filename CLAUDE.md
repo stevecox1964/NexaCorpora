@@ -21,9 +21,9 @@ BookMarkManager React UI at http://localhost:5000
   [video appears in the list, with brain badge if auto-assigned]
 ```
 
-### Transcription Flow
+### Processing Flow (Transcribe + Summarize + FAQ)
 ```
-User clicks "Transcribe" button on a video row
+User clicks "Process" button on a video row
      ↓ POST /api/transcribe/<video_id>
 routes.py → transcription_service.py
   [reads provider from settings table, creates job record, launches background thread]
@@ -31,42 +31,28 @@ routes.py → transcription_service.py
 Frontend polls GET /api/jobs/<job_id> every 4 seconds
      ↓
 Background thread:
-  1. yt-dlp downloads audio-only (MP3) to temp dir
-  2. Provider-specific transcription (both produce [M:SS] timestamps):
+  1. yt-dlp downloads audio-only (MP3) to temp dir (status: downloading)
+  2. Provider-specific transcription (status: transcribing):
      - AssemblyAI: SDK uploads audio + transcribes → get_sentences() for timestamps
      - Gemini Audio: uploads via genai.upload_file() + generate_content() with timestamp prompt
-  3. Prepends video title + YouTube URL, stores transcript text + provider name in SQLite transcripts table
-  4. Updates job status → "completed"
-  5. Auto-embeds transcript chunks for vector search (non-fatal if it fails)
-  6. Cleans up temp files
+  3. Prepends video title + YouTube URL, stores transcript text + provider name
+  4. Generates short 2-4 sentence narrative summary (status: summarizing)
+  5. Generates FAQ (5-10 Q&A pairs) — stored in separate `faq` column
+  6. Updates job status → "completed"
+  7. Auto-embeds transcript chunks for vector search (non-fatal)
+  8. Auto-assigns to matching brains (non-fatal)
+  9. Cleans up temp files
      ↓
-Frontend sees "completed" → shows green "View" button + provider badge (AAI/Gemini)
-User clicks "View" → TranscriptModal with embedded YouTube player + clickable timestamps + Save to File
+Frontend sees "completed" → all 3 columns populate:
+  - Summary: "View"/"Hide" toggle (inline expand)
+  - FAQ: "View"/"Hide" toggle (inline expand)
+  - Transcript: "View" button → TranscriptModal with embedded YouTube player + clickable timestamps
+
+Refresh: "Refresh" icon on processed video → POST /api/refresh/<video_id>
+  [regenerates summary + FAQ without re-transcribing]
 
 Delete transcript: trash icon on video row → DELETE /api/transcripts/<video_id>
-  [deletes transcript + summary + embeddings (cascade), Transcribe button reappears]
-```
-
-### Summarization Flow
-```
-User clicks "Summarize" button on a video row → dropdown: "Structured", "Narrative", or "FAQ Extraction"
-     ↓ POST /api/summaries/<video_id> { summaryType: "structured" | "narrative" | "faq" }
-routes.py → gemini_service.py
-  [reads transcript from DB, sends to Gemini with selected prompt]
-     ↓
-  Structured: FAQ-style tech extraction (Project Overview, Tech Stack, Architecture, etc.)
-  Narrative: 2-4 paragraph prose summary
-  FAQ: 5-10 Q&A pairs with video URL source link
-     ↓
-Each type appends to existing summary with section header (--- Type Summary ---)
-Each section header includes video title + YouTube URL for source attribution
-Multiple types accumulate — user can generate one, two, or all three
-     ↓
-Frontend shows expandable summary inline on the video row (both Videos page and Brain detail)
-Re-summarize: refresh icon next to existing summary → pick type → appends
-Clear summary: X button to reset accumulated summary
-Delete: DELETE /api/summaries/<video_id> clears the summary field
-Save: download icon → saves summary to file with video title + URL header
+  [deletes transcript + summary + FAQ + embeddings (cascade), Process button reappears]
 ```
 
 ### Chat Flow (RAG with Vector Search)
@@ -183,7 +169,7 @@ Simple health check to verify the server is running.
 
 #### GET /api/videos
 Returns paginated list of YouTube video bookmarks (latest to oldest).
-Each video includes `hasTranscript` (boolean), `hasSummary` (boolean), `transcriptProvider` (string or null), and `transcriptJobStatus` (string or null) fields via LEFT JOINs.
+Each video includes `hasTranscript` (boolean), `hasSummary` (boolean), `hasFaq` (boolean), `transcriptProvider` (string or null), and `transcriptJobStatus` (string or null) fields via LEFT JOINs.
 - Query params: `page` (default: 1), `per_page` (default: 20, max: 100)
 - Response:
 ```json
@@ -197,6 +183,7 @@ Each video includes `hasTranscript` (boolean), `hasSummary` (boolean), `transcri
       "channelName": "...",
       "hasTranscript": true,
       "hasSummary": true,
+      "hasFaq": true,
       "transcriptProvider": "assemblyai",
       "transcriptJobStatus": null
     }
@@ -244,25 +231,28 @@ Start a background transcription job. Uses the provider configured in the settin
 ### Summary Endpoints
 
 #### POST /api/summaries/<video_id>
-Generate a summary for a video's transcript using Gemini. Each type appends to the existing summary with a section header.
-- Body (optional): `{ "summaryType": "structured" | "narrative" | "faq" }` (default: `"structured"`)
-  - `structured`: FAQ-style technical extraction (Project Overview, Tech Stack, Architecture, DevOps, Features, Monetization, Known Issues)
-  - `narrative`: 2-4 paragraph prose summary
-  - `faq`: 5-10 Q&A pairs with video URL source link
-- Appends with `--- Type Summary ---` header (accumulates multiple types).
-- Response: `{ "success": true, "transcript": { "videoId", "content", "summary", "indexedAt" } }`
+Generate a short 2-4 sentence narrative summary for a video's transcript using Gemini. Overwrites existing summary.
+- Response: `{ "success": true, "transcript": { "videoId", "content", "summary", "faq", "indexedAt" } }`
 
 #### GET /api/summaries/<video_id>
 Get the stored summary for a video.
 - Response: `{ "success": true, "summary": "...", "videoId": "..." }`
 
 #### DELETE /api/summaries/<video_id>
-Clear the accumulated summary for a video.
+Clear both summary and FAQ for a video.
 - Response: `{ "success": true, "message": "Summary cleared for <video_id>" }`
 
 #### POST /api/summaries/bulk
-Generate summaries for all transcripts that don't have one yet.
+Generate summaries and FAQs for all transcripts that don't have them yet.
 - Response: `{ "success": true, "generated": 5, "errors": [], "total": 5 }`
+
+#### GET /api/faq/<video_id>
+Get the stored FAQ for a video.
+- Response: `{ "success": true, "faq": "...", "videoId": "..." }`
+
+#### POST /api/refresh/<video_id>
+Regenerate both summary and FAQ without re-transcribing.
+- Response: `{ "success": true, "transcript": { "videoId", "content", "summary", "faq", "indexedAt" } }`
 
 ### Chat Endpoints
 
@@ -342,7 +332,7 @@ Get suggested brains for a video based on embedding similarity.
 #### GET /api/jobs/<job_id>
 Poll job status by ID.
 - Response: `{ "success": true, "job": { "id", "videoId", "status", "errorMessage", "createdAt", "completedAt" } }`
-- Job statuses: `pending` → `downloading` → `transcribing` → `completed` | `failed`
+- Job statuses: `pending` → `downloading` → `transcribing` → `summarizing` → `completed` | `failed`
 
 #### GET /api/jobs/video/<video_id>
 Get the active (non-completed, non-failed) transcription job for a video.
@@ -371,7 +361,7 @@ Update application settings.
 
 #### GET /api/stats
 Get application statistics.
-- Response: `{ "success": true, "totalVideos": 150, "totalTranscripts": 42, "totalSummaries": 30 }`
+- Response: `{ "success": true, "totalVideos": 150, "totalTranscripts": 42, "totalSummaries": 30, "totalFaqs": 25 }`
 
 ## Database Schema
 
@@ -395,7 +385,8 @@ Get application statistics.
 | id              | INTEGER  | Primary key                    |
 | video_id        | TEXT     | Foreign key to videos          |
 | content         | TEXT     | Full transcript text           |
-| summary         | TEXT     | Gemini-generated summary       |
+| summary         | TEXT     | Short 2-4 sentence narrative summary |
+| faq             | TEXT     | FAQ (5-10 Q&A pairs)           |
 | provider        | TEXT     | Transcription provider used (assemblyai or gemini) |
 | indexed_at      | TEXT     | Indexing timestamp             |
 
@@ -405,7 +396,7 @@ Get application statistics.
 | id              | TEXT     | Primary key (UUID)                                    |
 | video_id        | TEXT     | Foreign key to videos                                 |
 | job_type        | TEXT     | Job type (e.g., "transcribe")                         |
-| status          | TEXT     | pending / downloading / transcribing / completed / failed |
+| status          | TEXT     | pending / downloading / transcribing / summarizing / completed / failed |
 | error_message   | TEXT     | Error details if failed                               |
 | created_at      | TEXT     | Job creation timestamp                                |
 | completed_at    | TEXT     | Job completion timestamp                              |
@@ -569,9 +560,7 @@ environment:
 - [x] Embeddings status section in Settings page (embedded/pending/chunks stats + Build Embeddings button)
 - [x] Removed unused ProfilePage.jsx (profile merged into Settings)
 - [x] Rebuild all embeddings endpoint (`POST /api/embeddings/rebuild`) + "Rebuild All" button in Settings
-- [x] Structured summarization prompt (FAQ-style tech extraction: Project Overview, Tech Stack, Architecture, etc.)
-- [x] Summary type selection — "Structured" vs "Narrative" dropdown on Summarize button
-- [x] Re-summarize capability — refresh icon on existing summaries to regenerate with type choice
+- [x] Unified "Process" pipeline — single button chains Transcribe → Summary → FAQ in background thread
 - [x] AssemblyAI sentence-level timestamps (`[M:SS]` format) in transcript content
 - [x] Embedded YouTube player in TranscriptModal — clickable timestamps seek within player
 - [x] Retranscribe endpoint (`POST /api/retranscribe/<video_id>`) — deletes old transcript + re-transcribes
@@ -587,11 +576,10 @@ environment:
 - [x] Shared `chatUtils.jsx` for timestamp parsing/rendering across ChatDrawer and BrainsPage
 - [x] Auto-assign videos to matching brains after transcription (>0.85 similarity)
 - [x] Removed Topics/clustering feature (replaced by Brains)
-- [x] Multi-type accumulating summaries — Structured, Narrative, FAQ Extraction append with section headers instead of overwriting
-- [x] FAQ Extraction summary type — 5-10 Q&A pairs with video URL source link
-- [x] Clear summary endpoint (`DELETE /api/summaries/<video_id>`) + X button in UI
-- [x] Video URL included in all summary prompts for source attribution
-- [x] Summary UI in Brain detail Videos tab — full Summarize/Summary/Re-summarize/Clear controls
+- [x] Separate `faq` column in transcripts table — FAQ stored independently from summary
+- [x] 6-column video row layout — Thumbnail | Info | Summary | FAQ | Transcript | Actions (Videos + Brains pages)
+- [x] Refresh endpoint (`POST /api/refresh/<video_id>`) — regenerates summary + FAQ without re-transcribing
+- [x] Short narrative summaries (2-4 sentences) — replaced accumulating multi-type system
 - [x] Channel-based auto-assign — new videos auto-added to brains that have videos from the same channel
 - [x] Brain badges on video rows — purple pills showing brain membership, clickable to navigate to brain
 - [x] Brain navigation from video list — clicking brain badge switches to Brains page and auto-selects brain
@@ -599,14 +587,14 @@ environment:
 - [x] Save transcript to file — "Save to File" button in TranscriptModal (includes video title + YouTube URL header)
 - [x] Save summary to file — download icon button on expanded summary rows (Videos page + Brains page)
 - [x] Save chat to file — "Save" button in ChatDrawer header + "Save Chat" button in Brain chat toolbar
-- [x] Bulk download brain content — "Download All Content" button in Brain detail Videos toolbar, downloads each video's transcript + summary as separate files
+- [x] Bulk download brain content — "Download All Content" button in Brain detail Videos toolbar, downloads each video's transcript + summary + FAQ as separate files
 - [x] Video URL embedded in stored transcripts — prepended as header line on transcription
 - [x] Video URL embedded in stored summaries — each summary section header includes video title + YouTube URL
 
 ### Future Tasks
 
 #### Bulk Operations
-- [ ] Bulk "Transcribe All" button
+- [ ] Bulk "Process All" button
 - [ ] Progress tracking for bulk operations
 
 #### Search Enhancements
@@ -625,22 +613,15 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - Bottom (pinned via `margin-top: auto`): Settings
 - Active item highlighted with blue text + right border accent
 
-**Videos Page** — List view with 4 columns:
-| Thumbnail (160x90) | Video Info | Transcript | Actions |
+**Videos Page** — List view with 6 columns:
+| Thumbnail (160x90) | Video Info | Summary | FAQ | Transcript | Actions |
 
 - **Thumbnail**: 160x90px, links to YouTube
 - **Video Info**: Title, Channel name, Saved date, Brain badges (purple pills, clickable → navigates to brain)
-- **Transcript**: Status indicator + action
-  - Green "View" button (clickable) → opens TranscriptModal
-  - Provider badge ("AAI" in blue or "Gemini" in purple) — shows which service transcribed
-  - Trash icon button → deletes transcript + summary + embeddings (confirmation prompt)
-  - "Summary" / "Hide" toggle button (when summary exists) → expands inline summary
-  - Refresh icon button (when summary exists) → dropdown to re-summarize as "Structured", "Narrative", or "FAQ"
-  - Download icon button (when summary content loaded) → saves summary to file
-  - "Summarize" button (when transcript exists but no summary) → dropdown: "Structured", "Narrative", or "FAQ"
-  - Yellow spinner + "Downloading..." / "Transcribing..." (during active job)
-  - Gray "None" + "Transcribe" button (no transcript yet)
-- **Actions**: Remove button
+- **Summary**: "View"/"Hide" toggle (inline expand) or gray "None"
+- **FAQ**: "View"/"Hide" toggle (inline expand) or gray "None"
+- **Transcript**: "View" button → TranscriptModal, provider badge (AAI/Gemini), trash icon; or spinner during job; or gray "None"
+- **Actions**: "Process" button (when no transcript), "Refresh" icon (when transcript exists, regenerates summary + FAQ), "Remove" button
 
 **Settings Page** — scrollable sections (each a `.settings-section` card):
 1. **Profile**: Avatar + editable name/subtitle (click-to-edit inline) + stats counters (Videos, Transcripts, Summaries)
@@ -653,9 +634,9 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - Brain list view: card grid with thumbnail mosaics, name, description, video count
 - "+ New Brain" button → modal with name + description fields
 - Brain detail view: back button, brain name/description, video count, delete button
-- Two tabs: **Videos** (add/remove videos, view transcripts, summarize) and **Chat** (brain-scoped RAG with embedded YouTube player + clickable timestamps)
-- Videos tab includes full summary UI: Summarize/Summary toggle/Re-summarize dropdown (Structured/Narrative/FAQ)/Save/Clear button/expandable summary row
-- Videos toolbar: "+ Add Videos" button + "Download All Content" button (bulk exports all transcripts + summaries as separate files)
+- Two tabs: **Videos** (add/remove videos, view transcripts/summaries/FAQ) and **Chat** (brain-scoped RAG with embedded YouTube player + clickable timestamps)
+- Videos tab: 6-column grid matching Videos page layout (Thumbnail | Info | Summary | FAQ | Transcript | Actions)
+- Videos toolbar: "+ Add Videos" button + "Download All Content" button (bulk exports all transcripts + summaries + FAQs as separate files)
 - "Add Videos" modal with search filter, checkbox multi-select, bulk add
 - Accepts `initialBrainId` prop for navigation from video card brain badges
 - Self-contained: manages its own chat state, summary state, YouTube player, TranscriptModal
@@ -676,7 +657,8 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 ### Gemini Integration
 - **google-generativeai** Python SDK (`>=0.8.0`) — note: this SDK is deprecated (EOL Nov 2025); migration to `google-genai` is a future task
 - **Model**: configurable via `GEMINI_MODEL` env var, defaults to `gemini-2.5-flash`
-- **Summaries**: reads transcript from DB → sends to Gemini with selected prompt type → stores result in `transcripts.summary` column. Three modes: `structured` (FAQ-style tech extraction), `narrative` (2-4 paragraph prose), and `faq` (5-10 Q&A pairs with source URL). Each section header embeds video title + URL. Supports accumulating re-summarization.
+- **Summaries**: reads transcript from DB → sends to Gemini → stores short 2-4 sentence narrative in `transcripts.summary` column. No accumulation — overwrites on refresh.
+- **FAQ**: reads transcript from DB → sends to Gemini with FAQ prompt → stores 5-10 Q&A pairs in `transcripts.faq` column. Generated automatically during processing pipeline.
 - **Chat (RAG)**: embeds user message → KNN search over transcript chunks via sqlite-vec → falls back to summaries → streams response via SSE
 - **Embeddings**: `gemini-embedding-001` model, 768-dim output (`output_dimensionality=768`), batched via `genai.embed_content()`
 - **System instruction**: passed when constructing `GenerativeModel` instance (not in `generate_content()`)

@@ -16,7 +16,15 @@
       "Bash(docker exec:*)",
       "Bash(MSYS_NO_PATHCONV=1 docker exec:*)",
       "Bash(python3:*)",
-      "Bash(python -m json.tool:*)"
+      "Bash(python -m json.tool:*)",
+      "WebFetch(domain:www.assemblyai.com)",
+      "Bash(npx vite build)",
+      "WebFetch(domain:docs.cloud.google.com)",
+      "WebFetch(domain:codelabs.developers.google.com)",
+      "WebFetch(domain:googleapis.github.io)",
+      "WebFetch(domain:pgaleone.eu)",
+      "WebFetch(domain:jduncan.io)",
+      "WebFetch(domain:pinggy.io)"
     ]
   }
 }

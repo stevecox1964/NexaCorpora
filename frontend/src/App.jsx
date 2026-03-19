@@ -26,6 +26,7 @@ function App() {
   const [activePage, setActivePage] = useState('videos');
   const [initialBrainId, setInitialBrainId] = useState(null);
   const [summaryStates, setSummaryStates] = useState({});
+  const [faqStates, setFaqStates] = useState({});
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -113,10 +114,10 @@ function App() {
     ));
   }, []);
 
-  const markVideoTranscribed = useCallback((videoId) => {
+  const markVideoProcessed = useCallback((videoId) => {
     setVideos(prev => prev.map(v =>
       v.videoId === videoId
-        ? { ...v, hasTranscript: true, transcriptJobStatus: null }
+        ? { ...v, hasTranscript: true, hasSummary: true, hasFaq: true, transcriptJobStatus: null }
         : v
     ));
   }, []);
@@ -128,7 +129,7 @@ function App() {
     }
   }, []);
 
-  const handleTranscribe = async (videoId) => {
+  const handleProcess = async (videoId) => {
     try {
       const data = await apiService.startTranscription(videoId);
       const jobId = data.job.id;
@@ -152,16 +153,16 @@ function App() {
 
           if (job.status === 'completed') {
             stopPolling(videoId);
-            markVideoTranscribed(videoId);
+            markVideoProcessed(videoId);
           } else if (job.status === 'failed') {
             stopPolling(videoId);
             updateVideoJobStatus(videoId, null);
-            setError(`Transcription failed for video: ${job.errorMessage || 'Unknown error'}`);
+            setError(`Processing failed for video: ${job.errorMessage || 'Unknown error'}`);
           }
         } catch (err) {
           stopPolling(videoId);
           updateVideoJobStatus(videoId, null);
-          setError(`Error polling transcription status: ${err.message}`);
+          setError(`Error polling job status: ${err.message}`);
         }
       }, 4000);
 
@@ -173,7 +174,7 @@ function App() {
   };
 
   const handleDeleteTranscript = async (videoId) => {
-    if (!confirm('Delete this transcript? This will also remove the summary and embeddings.')) {
+    if (!confirm('Delete this transcript? This will also remove the summary, FAQ, and embeddings.')) {
       return;
     }
 
@@ -181,7 +182,7 @@ function App() {
       await apiService.deleteTranscript(videoId);
       setVideos(prev => prev.map(v =>
         v.videoId === videoId
-          ? { ...v, hasTranscript: false, hasSummary: false, transcriptProvider: null }
+          ? { ...v, hasTranscript: false, hasSummary: false, hasFaq: false, transcriptProvider: null }
           : v
       ));
       setSummaryStates(prev => {
@@ -189,28 +190,42 @@ function App() {
         delete next[videoId];
         return next;
       });
+      setFaqStates(prev => {
+        const next = { ...prev };
+        delete next[videoId];
+        return next;
+      });
     } catch (err) {
       setError(err.message);
     }
   };
 
-  const handleGenerateSummary = async (videoId, summaryType = 'structured') => {
-    setSummaryStates(prev => ({
-      ...prev,
-      [videoId]: { ...prev[videoId], loading: true }
-    }));
-
+  const handleRefreshSummaryFaq = async (videoId) => {
     try {
-      const data = await apiService.generateSummary(videoId, summaryType);
-      const summary = data.transcript?.summary;
+      // Show loading state for both
+      setSummaryStates(prev => ({
+        ...prev,
+        [videoId]: { ...prev[videoId], loading: true }
+      }));
+      setFaqStates(prev => ({
+        ...prev,
+        [videoId]: { ...prev[videoId], loading: true }
+      }));
+
+      const data = await apiService.refreshSummaryFaq(videoId);
+      const transcript = data.transcript;
 
       setVideos(prev => prev.map(v =>
-        v.videoId === videoId ? { ...v, hasSummary: true } : v
+        v.videoId === videoId ? { ...v, hasSummary: true, hasFaq: true } : v
       ));
 
       setSummaryStates(prev => ({
         ...prev,
-        [videoId]: { expanded: true, content: summary, loading: false }
+        [videoId]: { expanded: true, content: transcript?.summary, loading: false }
+      }));
+      setFaqStates(prev => ({
+        ...prev,
+        [videoId]: { expanded: true, content: transcript?.faq, loading: false }
       }));
     } catch (err) {
       setError(err.message);
@@ -218,23 +233,10 @@ function App() {
         ...prev,
         [videoId]: { ...prev[videoId], loading: false }
       }));
-    }
-  };
-
-  const handleClearSummary = async (videoId) => {
-    if (!confirm('Clear the accumulated summary for this video?')) return;
-    try {
-      await apiService.clearSummary(videoId);
-      setVideos(prev => prev.map(v =>
-        v.videoId === videoId ? { ...v, hasSummary: false } : v
-      ));
-      setSummaryStates(prev => {
-        const next = { ...prev };
-        delete next[videoId];
-        return next;
-      });
-    } catch (err) {
-      setError(err.message);
+      setFaqStates(prev => ({
+        ...prev,
+        [videoId]: { ...prev[videoId], loading: false }
+      }));
     }
   };
 
@@ -281,17 +283,41 @@ function App() {
     }
   };
 
-  const handleBulkSummarize = async () => {
-    try {
-      setLoading(true);
-      const data = await apiService.generateBulkSummaries();
-      const msg = `Generated ${data.generated} summaries.${data.errors?.length ? ` ${data.errors.length} errors.` : ''}`;
-      alert(msg);
-      await fetchVideos(pagination.page);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+  const handleToggleFaq = async (videoId) => {
+    const current = faqStates[videoId];
+
+    if (current?.expanded) {
+      setFaqStates(prev => ({
+        ...prev,
+        [videoId]: { ...prev[videoId], expanded: false }
+      }));
+      return;
+    }
+
+    // Expand — fetch FAQ if not cached
+    if (current?.content) {
+      setFaqStates(prev => ({
+        ...prev,
+        [videoId]: { ...prev[videoId], expanded: true }
+      }));
+    } else {
+      setFaqStates(prev => ({
+        ...prev,
+        [videoId]: { expanded: false, content: null, loading: true }
+      }));
+      try {
+        const data = await apiService.getFaq(videoId);
+        setFaqStates(prev => ({
+          ...prev,
+          [videoId]: { expanded: true, content: data.faq, loading: false }
+        }));
+      } catch (err) {
+        setError(err.message);
+        setFaqStates(prev => ({
+          ...prev,
+          [videoId]: { ...prev[videoId], loading: false }
+        }));
+      }
     }
   };
 
@@ -338,13 +364,6 @@ function App() {
             <header className="header">
               <h1>YouTube Bookmark Manager</h1>
               <div className="header-actions">
-                <button
-                  className="btn btn-secondary"
-                  onClick={handleBulkSummarize}
-                  disabled={serverOffline || loading}
-                >
-                  Summarize All
-                </button>
                 <button
                   className="btn btn-secondary"
                   onClick={handleImportBookmarks}
@@ -476,6 +495,8 @@ function App() {
                   <div className="video-list-header">
                     <span>Thumbnail</span>
                     <span>Video Info</span>
+                    <span>Summary</span>
+                    <span>FAQ</span>
                     <span>Transcript</span>
                     <span>Actions</span>
                   </div>
@@ -486,14 +507,15 @@ function App() {
                       key={video.videoId}
                       video={video}
                       onDelete={handleDeleteVideo}
-                      onTranscribe={handleTranscribe}
+                      onProcess={handleProcess}
                       onDeleteTranscript={handleDeleteTranscript}
                       onViewTranscript={(videoId, videoTitle) => setTranscriptView({ videoId, videoTitle })}
-                      onGenerateSummary={handleGenerateSummary}
-                      onClearSummary={handleClearSummary}
+                      onRefreshSummaryFaq={handleRefreshSummaryFaq}
                       onToggleSummary={handleToggleSummary}
+                      onToggleFaq={handleToggleFaq}
                       onNavigateToBrain={handleNavigateToBrain}
                       summaryState={summaryStates[video.videoId]}
+                      faqState={faqStates[video.videoId]}
                     />
                   ))}
                 </div>
@@ -506,7 +528,7 @@ function App() {
                       onClick={() => handlePageChange(pagination.page - 1)}
                       disabled={!pagination.has_prev}
                     >
-                      ← Previous
+                      &larr; Previous
                     </button>
 
                     <div className="pagination-info">
@@ -523,7 +545,7 @@ function App() {
                       onClick={() => handlePageChange(pagination.page + 1)}
                       disabled={!pagination.has_next}
                     >
-                      Next →
+                      Next &rarr;
                     </button>
                   </div>
                 )}

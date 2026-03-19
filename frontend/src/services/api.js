@@ -172,15 +172,32 @@ class ApiService {
   }
 
   // Generate summary for a single video
-  async generateSummary(videoId, summaryType = 'structured') {
+  async generateSummary(videoId) {
     const response = await fetch(`${API_BASE}/summaries/${videoId}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ summaryType }),
     });
     if (!response.ok) {
       const data = await response.json();
       throw new Error(data.error || 'Failed to generate summary');
+    }
+    return response.json();
+  }
+
+  // Get FAQ for a video
+  async getFaq(videoId) {
+    const response = await fetch(`${API_BASE}/faq/${videoId}`);
+    if (!response.ok) throw new Error('Failed to fetch FAQ');
+    return response.json();
+  }
+
+  // Refresh summary and FAQ for a video (no re-transcription)
+  async refreshSummaryFaq(videoId) {
+    const response = await fetch(`${API_BASE}/refresh/${videoId}`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to refresh summary/FAQ');
     }
     return response.json();
   }

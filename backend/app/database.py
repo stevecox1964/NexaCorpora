@@ -90,6 +90,12 @@ def init_db(app):
         except Exception:
             pass  # Column already exists
 
+        # Add faq column to transcripts (idempotent migration)
+        try:
+            db.execute('ALTER TABLE transcripts ADD COLUMN faq TEXT')
+        except Exception:
+            pass  # Column already exists
+
         # Transcript chunks for embedding-based vector search
         db.execute('''
             CREATE TABLE IF NOT EXISTS transcript_chunks (
