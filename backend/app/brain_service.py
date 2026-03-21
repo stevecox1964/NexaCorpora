@@ -120,7 +120,8 @@ def get_brain_context(brain_id, query_text, k=8):
 
 def chat_with_brain(brain_id, user_message, conversation_history=None):
     """Generator that yields text chunks for SSE streaming. Brain-scoped RAG."""
-    from .gemini_service import get_gemini_model
+    from .gemini_service import _get_client, _get_model_name
+    from google.genai import types
 
     brain = Brain.get_by_id(brain_id)
     brain_name = brain['name'] if brain else 'Unknown Brain'
@@ -141,19 +142,21 @@ def chat_with_brain(brain_id, user_message, conversation_history=None):
         f"Knowledge Base Context:\n{context}"
     )
 
-    model = get_gemini_model(system_instruction=system_prompt)
+    client = _get_client()
 
     messages = []
     if conversation_history:
         for msg in conversation_history:
             role = 'user' if msg['role'] == 'user' else 'model'
-            messages.append({'role': role, 'parts': [msg['content']]})
+            messages.append(types.Content(role=role, parts=[types.Part.from_text(text=msg['content'])]))
 
-    messages.append({'role': 'user', 'parts': [user_message]})
+    messages.append(types.Content(role='user', parts=[types.Part.from_text(text=user_message)]))
 
-    response = model.generate_content(contents=messages, stream=True)
-
-    for chunk in response:
+    for chunk in client.models.generate_content_stream(
+        model=_get_model_name(),
+        contents=messages,
+        config=types.GenerateContentConfig(system_instruction=system_prompt),
+    ):
         if chunk.text:
             yield chunk.text
 

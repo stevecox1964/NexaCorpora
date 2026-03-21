@@ -1,21 +1,22 @@
 import os
 import logging
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from .models import Transcript, Video
 
 logger = logging.getLogger(__name__)
 
 
-def get_gemini_model(system_instruction=None):
-    """Initialize and return the Gemini model."""
+def _get_client():
+    """Create and return a Gemini client."""
     api_key = os.environ.get('GOOGLE_API_KEY')
     if not api_key:
         raise ValueError('GOOGLE_API_KEY not configured')
-    genai.configure(api_key=api_key)
-    model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
-    if system_instruction:
-        return genai.GenerativeModel(model_name, system_instruction=system_instruction)
-    return genai.GenerativeModel(model_name)
+    return genai.Client(api_key=api_key)
+
+
+def _get_model_name():
+    return os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
 
 
 def generate_summary(video_id):
@@ -30,7 +31,7 @@ def generate_summary(video_id):
     video_title = video['videoTitle'] if video else 'Unknown'
     video_url = f"https://www.youtube.com/watch?v={video_id}"
 
-    model = get_gemini_model()
+    client = _get_client()
 
     prompt = (
         "Summarize the following YouTube video transcript in 2-4 concise sentences. "
@@ -40,7 +41,7 @@ def generate_summary(video_id):
         f"Transcript:\n{transcript['content']}"
     )
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(model=_get_model_name(), contents=prompt)
     updated = Transcript.update_summary(video_id, response.text)
     return updated, None
 
@@ -57,7 +58,7 @@ def generate_faq(video_id):
     video_title = video['videoTitle'] if video else 'Unknown'
     video_url = f"https://www.youtube.com/watch?v={video_id}"
 
-    model = get_gemini_model()
+    client = _get_client()
 
     prompt = (
         "Extract frequently asked questions and their answers from the following YouTube video transcript. "
@@ -77,7 +78,7 @@ def generate_faq(video_id):
         f"Transcript:\n{transcript['content']}"
     )
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(model=_get_model_name(), contents=prompt)
     updated = Transcript.update_faq(video_id, response.text)
     return updated, None
 
@@ -134,24 +135,22 @@ def chat_with_knowledge_base(user_message, conversation_history=None):
         f"Knowledge Base Context:\n{context}"
     )
 
-    # Create model with system instruction
-    model = get_gemini_model(system_instruction=system_prompt)
+    client = _get_client()
 
-    # Build message history for Gemini
+    # Build message history
     messages = []
     if conversation_history:
         for msg in conversation_history:
             role = 'user' if msg['role'] == 'user' else 'model'
-            messages.append({'role': role, 'parts': [msg['content']]})
+            messages.append(types.Content(role=role, parts=[types.Part.from_text(text=msg['content'])]))
 
-    messages.append({'role': 'user', 'parts': [user_message]})
+    messages.append(types.Content(role='user', parts=[types.Part.from_text(text=user_message)]))
 
     # Stream the response
-    response = model.generate_content(
+    for chunk in client.models.generate_content_stream(
+        model=_get_model_name(),
         contents=messages,
-        stream=True
-    )
-
-    for chunk in response:
+        config=types.GenerateContentConfig(system_instruction=system_prompt),
+    ):
         if chunk.text:
             yield chunk.text

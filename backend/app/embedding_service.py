@@ -1,23 +1,24 @@
 import os
 import logging
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from sqlite_vec import serialize_float32
 from .database import get_db
 from .models import Transcript, Video
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = 'models/gemini-embedding-001'
+EMBEDDING_MODEL = 'gemini-embedding-001'
 EMBEDDING_DIM = 768
 CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 200
 
 
-def _configure_genai():
+def _get_client():
     api_key = os.environ.get('GOOGLE_API_KEY')
     if not api_key:
         raise ValueError('GOOGLE_API_KEY not configured')
-    genai.configure(api_key=api_key)
+    return genai.Client(api_key=api_key)
 
 
 def chunk_transcript(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
@@ -53,13 +54,13 @@ def chunk_transcript(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
 
 def embed_texts(texts):
     """Embed a list of texts using Gemini, returns list of 768-dim vectors."""
-    _configure_genai()
-    result = genai.embed_content(
+    client = _get_client()
+    result = client.models.embed_content(
         model=EMBEDDING_MODEL,
-        content=texts,
-        output_dimensionality=EMBEDDING_DIM,
+        contents=texts,
+        config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIM),
     )
-    return result['embedding']
+    return [e.values for e in result.embeddings]
 
 
 def embed_video(video_id):

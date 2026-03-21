@@ -595,6 +595,7 @@ environment:
 - [x] Process/Refresh progress moved from inline spinners to dedicated ProcessModal with status updates
 - [x] Smarter brain auto-assign (channel) — only assigns to best-fit brain where channel is >=50% of content, prevents scattershot assignments
 - [x] Smarter brain auto-assign (embedding) — raised cosine similarity threshold from 0.85 to 0.90 to reduce false matches
+- [x] Migrated from deprecated `google-generativeai` SDK to new `google-genai` SDK
 
 ### Future Tasks
 
@@ -660,20 +661,22 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - **AssemblyAI SDK** (`assemblyai==0.17.0`) — `transcriber.transcribe()` is a blocking call; `get_sentences()` provides sentence-level timestamps stored as `[M:SS] text` format
 - **Gemini Audio** — uses `google.generativeai` SDK: `genai.upload_file()` uploads audio, then `model.generate_content()` with timestamp prompt producing matching `[M:SS]` format
 - **Provider tracking** — `provider` column in transcripts table records which service was used; displayed as badge in UI
-- **Lazy imports** — `import google.generativeai as genai` is done inside `transcribe_audio_gemini()` (not at module top-level) to avoid FutureWarning deprecation messages on every gunicorn worker startup
+- **Lazy imports** — `from google import genai` is done inside `transcribe_audio_gemini()` (not at module top-level) to keep the import lightweight for workers that don't use Gemini transcription
 - **yt-dlp** — downloads audio-only (MP3, 192kbps) to temp directory, cleaned up after transcription (shared by both providers)
 - **ffmpeg** — installed in Docker image, required by yt-dlp for audio extraction
 - **Job status polling** — ProcessModal polls `GET /api/jobs/<id>` every 4 seconds via `setInterval`, cleaned up on modal close/unmount
 
 ### Gemini Integration
-- **google-generativeai** Python SDK (`>=0.8.0`) — note: this SDK is deprecated (EOL Nov 2025); migration to `google-genai` is a future task
+- **google-genai** Python SDK — new official SDK (replaces deprecated `google-generativeai`)
+- **Client pattern**: `genai.Client(api_key=...)` — explicit client instance, no global `configure()`
 - **Model**: configurable via `GEMINI_MODEL` env var, defaults to `gemini-2.5-flash`
 - **Summaries**: reads transcript from DB → sends to Gemini → stores short 2-4 sentence narrative in `transcripts.summary` column. No accumulation — overwrites on refresh.
 - **FAQ**: reads transcript from DB → sends to Gemini with FAQ prompt → stores 5-10 Q&A pairs in `transcripts.faq` column. Generated automatically during processing pipeline.
 - **Chat (RAG)**: embeds user message → KNN search over transcript chunks via sqlite-vec → falls back to summaries → streams response via SSE
-- **Embeddings**: `gemini-embedding-001` model, 768-dim output (`output_dimensionality=768`), batched via `genai.embed_content()`
-- **System instruction**: passed when constructing `GenerativeModel` instance (not in `generate_content()`)
-- **SSE streaming**: Flask `Response` with `stream_with_context` + `text/event-stream` mimetype; frontend reads via `ReadableStream`
+- **Embeddings**: `gemini-embedding-001` model, 768-dim output via `EmbedContentConfig(output_dimensionality=768)`, batched via `client.models.embed_content()`
+- **System instruction**: passed via `GenerateContentConfig(system_instruction=...)` in each call
+- **SSE streaming**: `client.models.generate_content_stream()` + Flask `Response` with `stream_with_context` + `text/event-stream` mimetype
+- **File upload**: `client.files.upload(file=path)` for Gemini audio transcription
 - **Gunicorn**: `--workers 2 --threads 4 --timeout 120` (gthread worker for SSE support)
 
 ### Vector Search Architecture

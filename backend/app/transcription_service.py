@@ -66,18 +66,19 @@ def transcribe_audio(audio_file_path, api_key):
 def transcribe_audio_gemini(audio_file_path, api_key):
     """Transcribe an audio file using Gemini multimodal capabilities.
     Returns text with sentence-level timestamps in [M:SS] format."""
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
+    from google import genai
+
+    client = genai.Client(api_key=api_key)
 
     logger.info(f'Uploading audio to Gemini Files API: {audio_file_path}')
-    audio_file = genai.upload_file(audio_file_path, mime_type='audio/mp3')
+    audio_file = client.files.upload(file=audio_file_path)
 
     model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
-    model = genai.GenerativeModel(model_name)
 
     logger.info(f'Requesting transcription from Gemini model: {model_name}')
-    response = model.generate_content(
-        [
+    response = client.models.generate_content(
+        model=model_name,
+        contents=[
             "Generate a complete, verbatim transcript of the speech in this audio file. "
             "Include timestamps at the start of each sentence in [M:SS] format (e.g. [0:00], [1:23], [12:05]). "
             "For videos over an hour, use [H:MM:SS] format. "
@@ -94,7 +95,7 @@ def transcribe_audio_gemini(audio_file_path, api_key):
     )
 
     try:
-        genai.delete_file(audio_file.name)
+        client.files.delete(name=audio_file.name)
     except Exception:
         pass
 
