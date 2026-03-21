@@ -3,6 +3,7 @@ import { apiService } from '../services/api';
 import { renderChatContent } from '../utils/chatUtils';
 import { saveToFile } from '../utils/saveToFile';
 import TranscriptModal from './TranscriptModal';
+import ProcessModal from './ProcessModal';
 
 function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
   const [brains, setBrains] = useState([]);
@@ -16,6 +17,7 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
   const [showAddVideos, setShowAddVideos] = useState(false);
   const [transcriptView, setTranscriptView] = useState(null);
   const [transcribingJobs, setTranscribingJobs] = useState({});
+  const [processModal, setProcessModal] = useState(null);
   const pollIntervals = useRef({});
 
   // Summary and FAQ state
@@ -111,51 +113,26 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
     };
   }, []);
 
-  const handleTranscribe = async (videoId) => {
-    try {
-      const data = await apiService.startTranscription(videoId);
-      const jobId = data.job.id;
-
-      setTranscribingJobs(prev => ({ ...prev, [videoId]: 'pending' }));
-
-      const interval = setInterval(async () => {
-        try {
-          const statusData = await apiService.getJobStatus(jobId);
-          const job = statusData.job;
-
-          if (!job) {
-            clearInterval(interval);
-            delete pollIntervals.current[videoId];
-            setTranscribingJobs(prev => { const n = { ...prev }; delete n[videoId]; return n; });
-            return;
-          }
-
-          setTranscribingJobs(prev => ({ ...prev, [videoId]: job.status }));
-
-          if (job.status === 'completed') {
-            clearInterval(interval);
-            delete pollIntervals.current[videoId];
-            setTranscribingJobs(prev => { const n = { ...prev }; delete n[videoId]; return n; });
-            loadBrainDetail(selectedBrainId);
-          } else if (job.status === 'failed') {
-            clearInterval(interval);
-            delete pollIntervals.current[videoId];
-            setTranscribingJobs(prev => { const n = { ...prev }; delete n[videoId]; return n; });
-            setError(`Transcription failed: ${job.errorMessage || 'Unknown error'}`);
-          }
-        } catch (err) {
-          clearInterval(interval);
-          delete pollIntervals.current[videoId];
-          setTranscribingJobs(prev => { const n = { ...prev }; delete n[videoId]; return n; });
-          setError(`Error polling transcription: ${err.message}`);
-        }
-      }, 4000);
-
-      pollIntervals.current[videoId] = interval;
-    } catch (err) {
-      setError(err.message);
-    }
+  const handleTranscribe = (videoId) => {
+    const video = brainDetail?.videos?.find(v => v.videoId === videoId);
+    setProcessModal({ videoId, videoTitle: video?.videoTitle || videoId, mode: 'process' });
   };
+
+  const handleProcessComplete = useCallback((videoId, data) => {
+    if (data) {
+      // Refresh mode
+      const transcript = data.transcript;
+      setBrainDetail(prev => prev ? {
+        ...prev,
+        videos: prev.videos.map(v => v.videoId === videoId ? { ...v, hasSummary: true, hasFaq: true } : v)
+      } : prev);
+      setSummaryStates(prev => ({ ...prev, [videoId]: { expanded: true, content: transcript?.summary, loading: false } }));
+      setFaqStates(prev => ({ ...prev, [videoId]: { expanded: true, content: transcript?.faq, loading: false } }));
+    } else {
+      // Process mode — reload brain detail to get updated data
+      if (selectedBrainId) loadBrainDetail(selectedBrainId);
+    }
+  }, [selectedBrainId]);
 
   const handleToggleSummary = async (videoId) => {
     const current = summaryStates[videoId];
@@ -197,23 +174,9 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
     }
   };
 
-  const handleRefreshSummaryFaq = async (videoId) => {
-    setSummaryStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], loading: true } }));
-    setFaqStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], loading: true } }));
-    try {
-      const data = await apiService.refreshSummaryFaq(videoId);
-      const transcript = data.transcript;
-      setBrainDetail(prev => prev ? {
-        ...prev,
-        videos: prev.videos.map(v => v.videoId === videoId ? { ...v, hasSummary: true, hasFaq: true } : v)
-      } : prev);
-      setSummaryStates(prev => ({ ...prev, [videoId]: { expanded: true, content: transcript?.summary, loading: false } }));
-      setFaqStates(prev => ({ ...prev, [videoId]: { expanded: true, content: transcript?.faq, loading: false } }));
-    } catch (err) {
-      setError(err.message);
-      setSummaryStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], loading: false } }));
-      setFaqStates(prev => ({ ...prev, [videoId]: { ...prev[videoId], loading: false } }));
-    }
+  const handleRefreshSummaryFaq = (videoId) => {
+    const video = brainDetail?.videos?.find(v => v.videoId === videoId);
+    setProcessModal({ videoId, videoTitle: video?.videoTitle || videoId, mode: 'refresh' });
   };
 
   // YouTube player
@@ -748,6 +711,15 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
           videoId={transcriptView.videoId}
           videoTitle={transcriptView.videoTitle}
           onClose={() => setTranscriptView(null)}
+        />
+      )}
+      {processModal && (
+        <ProcessModal
+          videoId={processModal.videoId}
+          videoTitle={processModal.videoTitle}
+          mode={processModal.mode}
+          onComplete={handleProcessComplete}
+          onClose={() => setProcessModal(null)}
         />
       )}
     </div>

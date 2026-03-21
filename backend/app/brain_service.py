@@ -211,7 +211,10 @@ def auto_assign_by_channel(video_id):
     """Auto-assign a video to brains that already contain videos from the same channel.
 
     Called immediately when a video is added (before transcription/embeddings exist).
-    Uses channel name matching against existing brain video membership.
+    Strategy: find the single best-fit brain for this channel and only assign there.
+    A brain is a candidate if the channel makes up >=50% of its videos (channel-focused brain).
+    If multiple candidates exist, pick the one with the highest channel ratio.
+    If no brain has >=50%, don't auto-assign — the user can manually add it.
     """
     from .models import Video
     video = Video.get_by_video_id(video_id)
@@ -224,34 +227,50 @@ def auto_assign_by_channel(video_id):
 
     db = get_db()
     brains_all = Brain.get_all()
-    assigned = []
+    best_brain = None
+    best_ratio = 0
 
     for brain in brains_all:
-        # Check if this brain already has this video
         video_ids = Brain.get_video_ids(brain['id'])
         if video_id in video_ids:
             continue
         if not video_ids:
             continue
 
-        # Get distinct channel names in this brain
+        # Count how many of this brain's videos are from the same channel
         placeholders = ','.join('?' * len(video_ids))
         rows = db.execute(f'''
-            SELECT DISTINCT LOWER(TRIM(channel_name)) as cn
+            SELECT LOWER(TRIM(channel_name)) as cn
             FROM videos
             WHERE video_id IN ({placeholders}) AND channel_name IS NOT NULL
         ''', video_ids).fetchall()
 
-        brain_channels = {row['cn'] for row in rows}
-        if channel_name in brain_channels:
-            Brain.add_video(brain['id'], video_id)
-            assigned.append(brain['name'])
-            logger.info(f'Channel-assigned video {video_id} to brain "{brain["name"]}" (channel: {video["channelName"]})')
+        total_videos = len(video_ids)
+        channel_count = sum(1 for row in rows if row['cn'] == channel_name)
+
+        if channel_count == 0:
+            continue
+
+        channel_ratio = channel_count / total_videos
+
+        # Only consider brains where this channel is the majority of content
+        if channel_ratio >= 0.5 and channel_ratio > best_ratio:
+            best_brain = brain
+            best_ratio = channel_ratio
+
+    assigned = []
+    if best_brain:
+        Brain.add_video(best_brain['id'], video_id)
+        assigned.append(best_brain['name'])
+        logger.info(
+            f'Channel-assigned video {video_id} to brain "{best_brain["name"]}" '
+            f'(channel: {video["channelName"]}, ratio: {best_ratio:.0%})'
+        )
 
     return assigned
 
 
-def auto_assign_video(video_id, auto_threshold=0.85):
+def auto_assign_video(video_id, auto_threshold=0.90):
     """Auto-assign a video to brains with high similarity. Returns assigned brain names."""
     suggestions = suggest_brains_for_video(video_id, threshold=auto_threshold)
     assigned = []

@@ -531,6 +531,160 @@ button.status-indicator.clickable:hover {
   margin-top: 24px;
 }
 
+/* Process Modal */
+.process-modal {
+  max-width: 480px;
+}
+
+.process-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.process-modal-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.process-modal-close {
+  color: #aaa;
+}
+
+.process-modal-video {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #0f0f0f;
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+
+.process-modal-thumb {
+  width: 80px;
+  height: 45px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.process-modal-title {
+  font-size: 13px;
+  color: #e0e0e0;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.process-modal-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 20px;
+}
+
+.process-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 12px;
+  border-left: 2px solid #303030;
+  margin-left: 9px;
+  transition: border-color 0.3s;
+}
+
+.process-step:first-child {
+  padding-top: 8px;
+}
+
+.process-step:last-child {
+  padding-bottom: 8px;
+  border-left-color: transparent;
+}
+
+.process-step-active {
+  border-left-color: #3ea6ff;
+}
+
+.process-step-completed {
+  border-left-color: #4caf50;
+}
+
+.process-step-failed {
+  border-left-color: #f44336;
+}
+
+.process-step-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: -11px;
+}
+
+.process-step-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #404040;
+}
+
+.process-spinner {
+  width: 20px !important;
+  height: 20px !important;
+  border-width: 2px !important;
+}
+
+.process-step-label {
+  font-size: 14px;
+  color: #888;
+  transition: color 0.3s;
+}
+
+.process-step-active .process-step-label {
+  color: #3ea6ff;
+  font-weight: 500;
+}
+
+.process-step-completed .process-step-label {
+  color: #e0e0e0;
+}
+
+.process-step-failed .process-step-label {
+  color: #f44336;
+}
+
+.process-modal-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.process-modal-success {
+  background: rgba(76, 175, 80, 0.12);
+  color: #4caf50;
+}
+
+.process-modal-error {
+  background: rgba(244, 67, 54, 0.12);
+  color: #f44336;
+}
+
+.process-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* Button disabled state */
 .btn:disabled {
   opacity: 0.5;

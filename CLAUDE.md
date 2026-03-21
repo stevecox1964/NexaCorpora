@@ -123,6 +123,7 @@ BookMarkManager/
 │   │   │   ├── AddVideoModal.jsx    # Modal for manually adding videos
 │   │   │   ├── TranscriptModal.jsx  # Modal for viewing transcript text
 │   │   │   ├── ChatDrawer.jsx       # Bottom drawer chat component (Gemini-powered)
+│   │   │   ├── ProcessModal.jsx     # Modal showing real-time progress of Process/Refresh pipeline
 │   │   │   ├── Sidebar.jsx          # Left navigation sidebar (Videos, Brains, Settings)
 │   │   │   ├── SettingsPage.jsx     # Unified settings page (profile, model config, transcription provider, embeddings, API status)
 │   │   │   └── BrainsPage.jsx       # AI Brains — curated knowledge bases with scoped chat
@@ -590,6 +591,10 @@ environment:
 - [x] Bulk download brain content — "Download All Content" button in Brain detail Videos toolbar, downloads each video's transcript + summary + FAQ as separate files
 - [x] Video URL embedded in stored transcripts — prepended as header line on transcription
 - [x] Video URL embedded in stored summaries — each summary section header includes video title + YouTube URL
+- [x] Process Modal — modal window showing real-time progress of Transcribe → Summary → FAQ pipeline with step indicators
+- [x] Process/Refresh progress moved from inline spinners to dedicated ProcessModal with status updates
+- [x] Smarter brain auto-assign (channel) — only assigns to best-fit brain where channel is >=50% of content, prevents scattershot assignments
+- [x] Smarter brain auto-assign (embedding) — raised cosine similarity threshold from 0.85 to 0.90 to reduce false matches
 
 ### Future Tasks
 
@@ -621,7 +626,13 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - **Summary**: "View"/"Hide" toggle (inline expand) or gray "None"
 - **FAQ**: "View"/"Hide" toggle (inline expand) or gray "None"
 - **Transcript**: "View" button → TranscriptModal, provider badge (AAI/Gemini), trash icon; or spinner during job; or gray "None"
-- **Actions**: "Process" button (when no transcript), "Refresh" icon (when transcript exists, regenerates summary + FAQ), "Remove" button
+- **Actions**: "Process" button (when no transcript) → opens ProcessModal, "Refresh" icon (when transcript exists, regenerates summary + FAQ) → opens ProcessModal, "Remove" button
+
+**ProcessModal** — real-time progress display for Process and Refresh pipelines:
+- Shows video title and step-by-step progress (Transcribing → Summary → FAQ for Process; Summary → FAQ for Refresh)
+- Each step shows pending/active/completed/failed state with visual indicators
+- Polls job status every 4 seconds, auto-closes on completion or shows error on failure
+- Used by both Videos page (App.jsx) and Brains page (BrainsPage.jsx)
 
 **Settings Page** — scrollable sections (each a `.settings-section` card):
 1. **Profile**: Avatar + editable name/subtitle (click-to-edit inline) + stats counters (Videos, Transcripts, Summaries)
@@ -652,7 +663,7 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 - **Lazy imports** — `import google.generativeai as genai` is done inside `transcribe_audio_gemini()` (not at module top-level) to avoid FutureWarning deprecation messages on every gunicorn worker startup
 - **yt-dlp** — downloads audio-only (MP3, 192kbps) to temp directory, cleaned up after transcription (shared by both providers)
 - **ffmpeg** — installed in Docker image, required by yt-dlp for audio extraction
-- **Job status polling** — frontend polls `GET /api/jobs/<id>` every 4 seconds via `setInterval`, cleaned up on component unmount
+- **Job status polling** — ProcessModal polls `GET /api/jobs/<id>` every 4 seconds via `setInterval`, cleaned up on modal close/unmount
 
 ### Gemini Integration
 - **google-generativeai** Python SDK (`>=0.8.0`) — note: this SDK is deprecated (EOL Nov 2025); migration to `google-genai` is a future task
@@ -678,8 +689,8 @@ Sidebar (240px) + main content area using CSS Grid (`grid-template-columns: 240p
 ### AI Brains
 - **Brain model** — `Brain` class in `models.py` with full CRUD + video management (add/remove/bulk/get)
 - **Brain-scoped RAG** — `brain_service.py` does KNN search over vec_chunks, post-filters to brain's video IDs (sqlite-vec can't filter during KNN)
-- **Auto-assign (channel)** — on video add, `auto_assign_by_channel()` matches channel name against existing brain videos; immediate, no embeddings needed
-- **Auto-assign (embedding)** — after transcription completes, `auto_assign_video()` compares new video's mean embedding to each brain's mean embedding via cosine similarity; assigns if >0.85
+- **Auto-assign (channel)** — on video add, `auto_assign_by_channel()` finds the single best-fit brain where the channel makes up >=50% of its videos; prevents scattershot assignment to topic-focused brains with diverse channels
+- **Auto-assign (embedding)** — after transcription completes, `auto_assign_video()` compares new video's mean embedding to each brain's mean embedding via cosine similarity; assigns if >0.90
 - **Brain badges** — main video list shows purple brain badges per video (clickable → navigates to brain detail)
 - **Brain membership** — `GET /api/videos` returns `video.brains` array (list of `{id, name}`) via `Brain.get_brains_for_video()`
 - **Suggest** — `GET /api/brains/suggest/<video_id>` returns brains with >0.75 similarity for manual assignment

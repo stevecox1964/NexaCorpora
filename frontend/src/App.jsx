@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import VideoCard from './components/VideoCard';
 import AddVideoModal from './components/AddVideoModal';
 import TranscriptModal from './components/TranscriptModal';
+import ProcessModal from './components/ProcessModal';
 import ChatDrawer from './components/ChatDrawer';
 import SettingsPage from './components/SettingsPage';
 import BrainsPage from './components/BrainsPage';
@@ -27,15 +28,13 @@ function App() {
   const [initialBrainId, setInitialBrainId] = useState(null);
   const [summaryStates, setSummaryStates] = useState({});
   const [faqStates, setFaqStates] = useState({});
+  const [processModal, setProcessModal] = useState(null); // { videoId, videoTitle, mode: 'process'|'refresh' }
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [searching, setSearching] = useState(false);
   const searchTimer = useRef(null);
-
-  // Track active polling intervals for transcription jobs
-  const pollIntervals = useRef({});
 
   const fetchVideos = async (page = 1) => {
     setLoading(true);
@@ -62,10 +61,6 @@ function App() {
 
   useEffect(() => {
     fetchVideos(1);
-    return () => {
-      // Clean up all polling intervals on unmount
-      Object.values(pollIntervals.current).forEach(clearInterval);
-    };
   }, []);
 
   const handlePageChange = (newPage) => {
@@ -108,12 +103,6 @@ function App() {
     }
   };
 
-  const updateVideoJobStatus = useCallback((videoId, status) => {
-    setVideos(prev => prev.map(v =>
-      v.videoId === videoId ? { ...v, transcriptJobStatus: status } : v
-    ));
-  }, []);
-
   const markVideoProcessed = useCallback((videoId) => {
     setVideos(prev => prev.map(v =>
       v.videoId === videoId
@@ -122,56 +111,31 @@ function App() {
     ));
   }, []);
 
-  const stopPolling = useCallback((videoId) => {
-    if (pollIntervals.current[videoId]) {
-      clearInterval(pollIntervals.current[videoId]);
-      delete pollIntervals.current[videoId];
-    }
-  }, []);
-
-  const handleProcess = async (videoId) => {
-    try {
-      const data = await apiService.startTranscription(videoId);
-      const jobId = data.job.id;
-
-      // Immediately show "Starting..." in the UI
-      updateVideoJobStatus(videoId, 'pending');
-
-      // Poll for job status every 4 seconds
-      const interval = setInterval(async () => {
-        try {
-          const statusData = await apiService.getJobStatus(jobId);
-          const job = statusData.job;
-
-          if (!job) {
-            stopPolling(videoId);
-            updateVideoJobStatus(videoId, null);
-            return;
-          }
-
-          updateVideoJobStatus(videoId, job.status);
-
-          if (job.status === 'completed') {
-            stopPolling(videoId);
-            markVideoProcessed(videoId);
-          } else if (job.status === 'failed') {
-            stopPolling(videoId);
-            updateVideoJobStatus(videoId, null);
-            setError(`Processing failed for video: ${job.errorMessage || 'Unknown error'}`);
-          }
-        } catch (err) {
-          stopPolling(videoId);
-          updateVideoJobStatus(videoId, null);
-          setError(`Error polling job status: ${err.message}`);
-        }
-      }, 4000);
-
-      pollIntervals.current[videoId] = interval;
-
-    } catch (err) {
-      setError(err.message);
-    }
+  const handleProcess = (videoId) => {
+    const video = videos.find(v => v.videoId === videoId);
+    setProcessModal({ videoId, videoTitle: video?.videoTitle || videoId, mode: 'process' });
   };
+
+  const handleProcessComplete = useCallback((videoId, data) => {
+    if (data) {
+      // Refresh mode — data contains the response with transcript info
+      const transcript = data.transcript;
+      setVideos(prev => prev.map(v =>
+        v.videoId === videoId ? { ...v, hasSummary: true, hasFaq: true } : v
+      ));
+      setSummaryStates(prev => ({
+        ...prev,
+        [videoId]: { expanded: true, content: transcript?.summary, loading: false }
+      }));
+      setFaqStates(prev => ({
+        ...prev,
+        [videoId]: { expanded: true, content: transcript?.faq, loading: false }
+      }));
+    } else {
+      // Process mode — mark video as fully processed
+      markVideoProcessed(videoId);
+    }
+  }, [markVideoProcessed]);
 
   const handleDeleteTranscript = async (videoId) => {
     if (!confirm('Delete this transcript? This will also remove the summary, FAQ, and embeddings.')) {
@@ -200,44 +164,9 @@ function App() {
     }
   };
 
-  const handleRefreshSummaryFaq = async (videoId) => {
-    try {
-      // Show loading state for both
-      setSummaryStates(prev => ({
-        ...prev,
-        [videoId]: { ...prev[videoId], loading: true }
-      }));
-      setFaqStates(prev => ({
-        ...prev,
-        [videoId]: { ...prev[videoId], loading: true }
-      }));
-
-      const data = await apiService.refreshSummaryFaq(videoId);
-      const transcript = data.transcript;
-
-      setVideos(prev => prev.map(v =>
-        v.videoId === videoId ? { ...v, hasSummary: true, hasFaq: true } : v
-      ));
-
-      setSummaryStates(prev => ({
-        ...prev,
-        [videoId]: { expanded: true, content: transcript?.summary, loading: false }
-      }));
-      setFaqStates(prev => ({
-        ...prev,
-        [videoId]: { expanded: true, content: transcript?.faq, loading: false }
-      }));
-    } catch (err) {
-      setError(err.message);
-      setSummaryStates(prev => ({
-        ...prev,
-        [videoId]: { ...prev[videoId], loading: false }
-      }));
-      setFaqStates(prev => ({
-        ...prev,
-        [videoId]: { ...prev[videoId], loading: false }
-      }));
-    }
+  const handleRefreshSummaryFaq = (videoId) => {
+    const video = videos.find(v => v.videoId === videoId);
+    setProcessModal({ videoId, videoTitle: video?.videoTitle || videoId, mode: 'refresh' });
   };
 
   const handleNavigateToBrain = (brainId) => {
@@ -570,6 +499,16 @@ function App() {
             videoId={transcriptView.videoId}
             videoTitle={transcriptView.videoTitle}
             onClose={() => setTranscriptView(null)}
+          />
+        )}
+
+        {processModal && (
+          <ProcessModal
+            videoId={processModal.videoId}
+            videoTitle={processModal.videoTitle}
+            mode={processModal.mode}
+            onComplete={handleProcessComplete}
+            onClose={() => setProcessModal(null)}
           />
         )}
 
