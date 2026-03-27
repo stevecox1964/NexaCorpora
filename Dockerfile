@@ -25,8 +25,12 @@ COPY backend/ .
 # Copy built frontend from stage 1
 COPY --from=frontend-build /build/dist ./static
 
+# Copy entrypoint script
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
 RUN mkdir -p /app/data
 
-EXPOSE 5000
+EXPOSE 5000 8001
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "120", "run:app"]
+CMD ["./entrypoint.sh"]

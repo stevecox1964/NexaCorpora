@@ -7,3 +7,6 @@ assemblyai==0.17.0
 google-genai
 sqlite-vec
 numpy
+mcp[cli]
+uvicorn
+starlette

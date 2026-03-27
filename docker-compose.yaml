@@ -6,6 +6,7 @@ services:
     container_name: bookmark-manager-app
     ports:
       - "5000:5000"
+      - "8001:8001"
     volumes:
       - ./backend/data:/app/data
     environment:
@@ -14,4 +15,6 @@ services:
       - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - BOOKMARKMANAGER_DB=/app/data/bookmarks.db
+      - BOOKMARKMANAGER_API=http://localhost:5000
     restart: unless-stopped
