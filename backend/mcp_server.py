@@ -568,6 +568,39 @@ def add_video_to_brain(brain_id: str, video_id: str) -> str:
         db.close()
 
 
+# ── Search history ─────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def get_search_history(limit: int = 50) -> str:
+    """Return recent user search queries with result counts.
+
+    Useful for understanding what topics the user is exploring.
+
+    Args:
+        limit: Max number of queries to return (default 50, max 200).
+    """
+    limit = min(max(limit, 1), 200)
+    db = _get_db()
+    try:
+        rows = db.execute(
+            'SELECT id, query, result_count, searched_at FROM search_queries ORDER BY searched_at DESC LIMIT ?',
+            (limit,),
+        ).fetchall()
+        queries = [
+            {
+                'id': r['id'],
+                'query': r['query'],
+                'resultCount': r['result_count'],
+                'searchedAt': r['searched_at'],
+            }
+            for r in rows
+        ]
+        return json.dumps({'queries': queries, 'total': len(queries)})
+    finally:
+        db.close()
+
+
 # ── Stats ──────────────────────────────────────────────────────────────────
 
 

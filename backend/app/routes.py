@@ -1,7 +1,7 @@
 import os
 import json
 from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
-from .models import Video, Job, Transcript, Setting, Brain
+from .models import Video, Job, Transcript, Setting, Brain, SearchQuery
 from .bookmarks import get_chrome_youtube_bookmarks
 from . import transcripts
 from .transcription_service import start_transcription
@@ -485,6 +485,7 @@ def semantic_search():
     try:
         from .embedding_service import search_similar_grouped
         results = search_similar_grouped(query, k=k)
+        SearchQuery.save(query, result_count=len(results))
         return jsonify({
             'success': True,
             'query': query,
@@ -503,6 +504,14 @@ def semantic_search():
         return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
         return jsonify({'success': False, 'error': f'Search failed: {str(e)}'}), 500
+
+
+@bp.route('/search/history', methods=['GET'])
+def search_history():
+    """Return recent search queries."""
+    limit = request.args.get('limit', 50, type=int)
+    limit = min(max(limit, 1), 200)
+    return jsonify({'success': True, 'queries': SearchQuery.get_recent(limit=limit)})
 
 
 # Embedding endpoints

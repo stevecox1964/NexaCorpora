@@ -381,6 +381,26 @@ class Brain:
         }
 
 
+class SearchQuery:
+    @staticmethod
+    def save(query, result_count=None):
+        db = get_db()
+        db.execute(
+            'INSERT INTO search_queries (query, result_count) VALUES (?, ?)',
+            (query, result_count)
+        )
+        db.commit()
+
+    @staticmethod
+    def get_recent(limit=50):
+        db = get_db()
+        rows = db.execute(
+            'SELECT id, query, result_count, searched_at FROM search_queries ORDER BY searched_at DESC LIMIT ?',
+            (limit,)
+        ).fetchall()
+        return [{'id': r['id'], 'query': r['query'], 'resultCount': r['result_count'], 'searchedAt': r['searched_at']} for r in rows]
+
+
 class Job:
     @staticmethod
     def create(video_id, job_type):

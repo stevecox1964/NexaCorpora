@@ -140,6 +140,17 @@ def init_db(app):
         db.execute('CREATE INDEX IF NOT EXISTS idx_brain_videos_brain_id ON brain_videos(brain_id)')
         db.execute('CREATE INDEX IF NOT EXISTS idx_brain_videos_video_id ON brain_videos(video_id)')
 
+        # Search query history — persists user queries for AI analysis
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS search_queries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT NOT NULL,
+                result_count INTEGER,
+                searched_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_search_queries_searched_at ON search_queries(searched_at DESC)')
+
         # Seed default settings (INSERT OR IGNORE keeps existing values)
         db.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
