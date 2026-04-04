@@ -601,6 +601,49 @@ def get_search_history(limit: int = 50) -> str:
         db.close()
 
 
+# ── Saved chats ───────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def get_saved_chats(limit: int = 50, source: str = '') -> str:
+    """Return saved chat conversations (ad-hoc Q&A sessions the user explicitly saved).
+
+    Each chat contains the full message history (user questions + assistant
+    answers with timestamp citations).  Useful for reviewing what the user
+    has already asked and the answers they received.
+
+    Args:
+        limit: Max chats to return (default 50, max 200).
+        source: Filter by source — 'global' or 'brain'.  Empty string = all.
+    """
+    limit = min(max(limit, 1), 200)
+    db = _get_db()
+    try:
+        if source:
+            rows = db.execute(
+                'SELECT id, source, brain_id, messages, saved_at FROM saved_chats WHERE source = ? ORDER BY saved_at DESC LIMIT ?',
+                (source, limit),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                'SELECT id, source, brain_id, messages, saved_at FROM saved_chats ORDER BY saved_at DESC LIMIT ?',
+                (limit,),
+            ).fetchall()
+        chats = [
+            {
+                'id': r['id'],
+                'source': r['source'],
+                'brainId': r['brain_id'],
+                'messages': json.loads(r['messages']),
+                'savedAt': r['saved_at'],
+            }
+            for r in rows
+        ]
+        return json.dumps({'chats': chats, 'total': len(chats)})
+    finally:
+        db.close()
+
+
 # ── Stats ──────────────────────────────────────────────────────────────────
 
 
@@ -650,7 +693,7 @@ if __name__ == '__main__':
     if args.transport == 'sse':
         host = os.environ.get('MCP_HOST', '0.0.0.0')
         port = int(os.environ.get('MCP_PORT', '8001'))
-        app = mcp.sse_app()
+        app = mcp.streamable_http_app()
         uvicorn.run(app, host=host, port=port)
     else:
         mcp.run(transport='stdio')

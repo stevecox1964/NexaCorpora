@@ -1,5 +1,6 @@
 from .database import get_db
 from datetime import datetime
+import json
 import uuid
 
 
@@ -399,6 +400,53 @@ class SearchQuery:
             (limit,)
         ).fetchall()
         return [{'id': r['id'], 'query': r['query'], 'resultCount': r['result_count'], 'searchedAt': r['searched_at']} for r in rows]
+
+
+class SavedChat:
+    @staticmethod
+    def save(source, messages, brain_id=None):
+        db = get_db()
+        db.execute(
+            'INSERT INTO saved_chats (source, brain_id, messages) VALUES (?, ?, ?)',
+            (source, brain_id, json.dumps(messages))
+        )
+        db.commit()
+
+    @staticmethod
+    def get_recent(limit=50, source=None):
+        db = get_db()
+        if source:
+            rows = db.execute(
+                'SELECT id, source, brain_id, messages, saved_at FROM saved_chats WHERE source = ? ORDER BY saved_at DESC LIMIT ?',
+                (source, limit)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                'SELECT id, source, brain_id, messages, saved_at FROM saved_chats ORDER BY saved_at DESC LIMIT ?',
+                (limit,)
+            ).fetchall()
+        return [SavedChat.row_to_dict(r) for r in rows]
+
+    @staticmethod
+    def get_by_id(chat_id):
+        db = get_db()
+        row = db.execute(
+            'SELECT id, source, brain_id, messages, saved_at FROM saved_chats WHERE id = ?',
+            (chat_id,)
+        ).fetchone()
+        return SavedChat.row_to_dict(row)
+
+    @staticmethod
+    def row_to_dict(row):
+        if row is None:
+            return None
+        return {
+            'id': row['id'],
+            'source': row['source'],
+            'brainId': row['brain_id'],
+            'messages': json.loads(row['messages']),
+            'savedAt': row['saved_at'],
+        }
 
 
 class Job:

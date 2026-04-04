@@ -13,14 +13,15 @@ A self-hosted app for saving and managing YouTube video bookmarks with built-in 
 - **Refresh** — regenerate summary + FAQ together without re-transcribing
 - **Semantic search** — vector similarity search across transcript chunks using Gemini embeddings + sqlite-vec; all queries are saved to the database so AI can analyse search history and surface patterns
 - **AI Brains** — curated knowledge bases: group videos into brains, chat with brain-scoped RAG context, full summary/FAQ UI, auto-assign by channel name and embedding similarity after transcription, brain badges on video rows, bulk download all content
-- **Chat with your videos** — RAG-powered chat drawer with SSE streaming, embedded YouTube player, clickable timestamps, and save conversation to file
+- **Chat with your videos** — RAG-powered chat drawer with SSE streaming, embedded YouTube player, clickable timestamps, and save conversation to file and database
 - **Delete transcripts** — cascades to embeddings, summary, and FAQ; Process button reappears
 - **Import bookmarks** from Chrome
 - **Configurable settings** — choose transcription provider, Gemini model, manage embeddings, and customize your profile
 - **Brain badges** — video rows show purple pills for brain membership, clickable to navigate directly to the brain
 - **Save content to file** — download transcripts, summaries, and chat conversations as `.txt` files with datetime-stamped filenames
 - **Paginated list view** with 6 columns: Thumbnail | Info | Summary | FAQ | Transcript | Actions
-- **MCP server** — exposes 16 tools (video CRUD, transcription, search, brains, stats, search history) so AI models can query and manage your video library via the Model Context Protocol
+- **Saved chat history** — clicking Save on any chat persists the full Q&A conversation (with timestamp citations) to the database; retrievable via REST API or MCP
+- **MCP server** — exposes 17 tools (video CRUD, transcription, search, brains, stats, search history, saved chats) so AI models can query and manage your video library via the Model Context Protocol
 
 ## Quick Start
 
@@ -106,7 +107,7 @@ BookMarkManager/
 │   ├── app/
 │   │   ├── __init__.py              # Serves SPA from /app/static
 │   │   ├── routes.py                # API endpoints
-│   │   ├── models.py                # SQLite models (Video, Transcript, Job, Setting, Brain)
+│   │   ├── models.py                # SQLite models (Video, Transcript, Job, Setting, Brain, SavedChat)
 │   │   ├── database.py              # DB connection + schema + sqlite-vec extension
 │   │   ├── gemini_service.py        # Gemini integration (summaries, FAQ, RAG chat)
 │   │   ├── embedding_service.py     # Gemini embeddings + sqlite-vec vector search
@@ -144,7 +145,7 @@ BookMarkManager/
 
 ## MCP Server
 
-The MCP (Model Context Protocol) server runs alongside Flask in the same Docker container on port 8001 (SSE transport). It exposes 16 tools so AI models can query and manage your video library.
+The MCP (Model Context Protocol) server runs alongside Flask in the same Docker container on port 8001 (SSE transport). It exposes 17 tools so AI models can query and manage your video library.
 
 ### MCP Tools
 
@@ -166,6 +167,7 @@ The MCP (Model Context Protocol) server runs alongside Flask in the same Docker 
 | `add_video_to_brain` | Add a video to a brain |
 | `get_stats` | Collection statistics (videos, transcripts, brains, etc.) |
 | `get_search_history` | Recent user search queries with result counts |
+| `get_saved_chats` | Saved chat Q&A sessions (filterable by source: global or brain) |
 
 ### Connecting
 
@@ -228,6 +230,9 @@ cd backend && python mcp_server.py
 | `GET` | `/api/settings` | Get app settings + API key status |
 | `PUT` | `/api/settings` | Update settings |
 | `GET` | `/api/stats` | Get collection statistics |
+| `POST` | `/api/chats` | Save a chat conversation to the database |
+| `GET` | `/api/chats` | List saved chat conversations (supports `?limit=` and `?source=`) |
+| `GET` | `/api/chats/<id>` | Get a single saved chat conversation |
 | `GET` | `/api/bookmarks/chrome` | List Chrome YouTube bookmarks |
 | `POST` | `/api/bookmarks/chrome/import` | Import Chrome bookmarks |
 
@@ -321,6 +326,16 @@ cd backend && python mcp_server.py
 | query | TEXT | Search query text |
 | result_count | INTEGER | Number of results returned |
 | searched_at | TEXT | ISO8601 timestamp |
+
+### saved_chats
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Primary key |
+| source | TEXT | `global` (main chat drawer) or `brain` (brain-scoped chat) |
+| brain_id | TEXT | Foreign key to brains (null for global chats) |
+| messages | TEXT | Full conversation as JSON array (`[{role, content}]`) |
+| saved_at | TEXT | ISO8601 timestamp |
 
 ## Environment Variables
 

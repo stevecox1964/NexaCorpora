@@ -68,6 +68,7 @@ See `backend/app/routes.py` for full details. Key groups:
 - Jobs: `GET /api/jobs/<id>`, `GET /api/jobs/video/<id>`
 - Embeddings: `POST /api/embeddings/build`, `POST /api/embeddings/rebuild`, `GET /api/embeddings/status`
 - Search: `GET /api/search?q=` (semantic, saves query to history), `GET /api/search/history` (recent queries), `GET /api/transcripts/search?q=` (LIKE)
+- Saved Chats: `POST /api/chats` (save conversation), `GET /api/chats` (list saved), `GET /api/chats/<id>` (single)
 - Brains: `GET/POST /api/brains`, `GET/PUT/DELETE /api/brains/<id>`, `POST /api/brains/<id>/videos`
 - Settings: `GET/PUT /api/settings`, `GET /api/stats`
 
@@ -82,6 +83,7 @@ See `backend/app/routes.py` for full details. Key groups:
 - **brains**: id (UUID), name, description, created_at, updated_at
 - **brain_videos**: brain_id, video_id, added_at
 - **search_queries**: id, query, result_count, searched_at — every semantic search is persisted here
+- **saved_chats**: id, source (global|brain), brain_id, messages (JSON), saved_at — user-saved Q&A sessions
 
 ## Running the Application
 
@@ -119,7 +121,7 @@ GEMINI_MODEL=gemini-2.5-flash  # Optional (options: gemini-2.5-flash, gemini-3-f
 
 `backend/mcp_server.py` — standalone, no Flask dependency. Direct `sqlite3` + `sqlite_vec.load()`. Transcription proxies to Flask API (`http://localhost:5000`).
 
-**16 tools**: `list_videos`, `get_video`, `add_video`, `delete_video`, `transcribe_video`, `get_job_status`, `get_transcript`, `get_summary`, `search_videos`, `search_transcripts_text`, `list_brains`, `get_brain`, `create_brain`, `add_video_to_brain`, `get_stats`, `get_search_history`
+**17 tools**: `list_videos`, `get_video`, `add_video`, `delete_video`, `transcribe_video`, `get_job_status`, `get_transcript`, `get_summary`, `search_videos`, `search_transcripts_text`, `list_brains`, `get_brain`, `create_brain`, `add_video_to_brain`, `get_stats`, `get_search_history`, `get_saved_chats`
 
 **Connect from Claude Desktop**:
 ```json

@@ -435,6 +435,21 @@ class ApiService {
     }
   }
 
+  async saveChat(messages, source = 'global', brainId = null) {
+    const body = { messages, source };
+    if (brainId) body.brainId = brainId;
+    const response = await fetch(`${API_BASE}/chats`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to save chat');
+    }
+    return response.json();
+  }
+
   async suggestBrains(videoId) {
     const response = await fetch(`${API_BASE}/brains/suggest/${videoId}`);
     if (!response.ok) throw new Error('Failed to get brain suggestions');

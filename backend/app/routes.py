@@ -1,7 +1,7 @@
 import os
 import json
 from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
-from .models import Video, Job, Transcript, Setting, Brain, SearchQuery
+from .models import Video, Job, Transcript, Setting, Brain, SearchQuery, SavedChat
 from .bookmarks import get_chrome_youtube_bookmarks
 from . import transcripts
 from .transcription_service import start_transcription
@@ -512,6 +512,38 @@ def search_history():
     limit = request.args.get('limit', 50, type=int)
     limit = min(max(limit, 1), 200)
     return jsonify({'success': True, 'queries': SearchQuery.get_recent(limit=limit)})
+
+
+# Saved chat endpoints
+
+@bp.route('/chats', methods=['POST'])
+def save_chat():
+    """Save a chat conversation to the database."""
+    data = request.get_json()
+    if not data or not data.get('messages'):
+        return jsonify({'success': False, 'error': 'messages required'}), 400
+    source = data.get('source', 'global')
+    brain_id = data.get('brainId')
+    SavedChat.save(source, data['messages'], brain_id=brain_id)
+    return jsonify({'success': True})
+
+
+@bp.route('/chats', methods=['GET'])
+def list_chats():
+    """Return recent saved chat conversations."""
+    limit = request.args.get('limit', 50, type=int)
+    limit = min(max(limit, 1), 200)
+    source = request.args.get('source')
+    return jsonify({'success': True, 'chats': SavedChat.get_recent(limit=limit, source=source)})
+
+
+@bp.route('/chats/<int:chat_id>', methods=['GET'])
+def get_chat(chat_id):
+    """Return a single saved chat conversation."""
+    chat = SavedChat.get_by_id(chat_id)
+    if not chat:
+        return jsonify({'success': False, 'error': 'Chat not found'}), 404
+    return jsonify({'success': True, 'chat': chat})
 
 
 # Embedding endpoints

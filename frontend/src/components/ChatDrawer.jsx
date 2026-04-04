@@ -180,6 +180,7 @@ function ChatDrawer() {
             onClick={() => {
               const text = messages.map(m => `[${m.role === 'user' ? 'You' : 'Assistant'}]\n${m.content}`).join('\n\n');
               saveToFile(text, 'chat');
+              apiService.saveChat(messages, 'global').catch(() => {});
             }}
             disabled={isStreaming || messages.length === 0}
             title="Save chat to file"

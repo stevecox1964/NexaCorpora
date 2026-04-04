@@ -631,6 +631,7 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
                 const header = `Brain: ${brainDetail?.name || 'Unknown'}\n\n`;
                 const text = chatMessages.map(m => `[${m.role === 'user' ? 'You' : 'Assistant'}]\n${m.content}`).join('\n\n');
                 saveToFile(header + text, 'chat');
+                apiService.saveChat(chatMessages, 'brain', brainDetail?.id).catch(() => {});
               }}
               disabled={chatStreaming || chatMessages.length === 0}
               title="Save chat to file"

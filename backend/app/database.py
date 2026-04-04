@@ -151,6 +151,19 @@ def init_db(app):
         ''')
         db.execute('CREATE INDEX IF NOT EXISTS idx_search_queries_searched_at ON search_queries(searched_at DESC)')
 
+        # Saved chat conversations — persists ad-hoc Q&A sessions
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS saved_chats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL DEFAULT 'global',
+                brain_id TEXT,
+                messages TEXT NOT NULL,
+                saved_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (brain_id) REFERENCES brains (id) ON DELETE SET NULL
+            )
+        ''')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_saved_chats_saved_at ON saved_chats(saved_at DESC)')
+
         # Seed default settings (INSERT OR IGNORE keeps existing values)
         db.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
