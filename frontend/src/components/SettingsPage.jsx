@@ -333,6 +333,13 @@ function SettingsPage() {
             </span>
           </div>
           <div className="api-status-row">
+            <span className={`api-status-dot ${apiKeys.openai ? 'configured' : 'missing'}`} />
+            <span className="api-status-label">OpenAI API Key</span>
+            <span className="api-status-value">
+              {apiKeys.openai ? 'Configured' : 'Not configured — publish to OpenAI disabled'}
+            </span>
+          </div>
+          <div className="api-status-row">
             <span className="api-status-dot configured" />
             <span className="api-status-label">Active Gemini Model</span>
             <span className="api-status-value">{currentModel}</span>

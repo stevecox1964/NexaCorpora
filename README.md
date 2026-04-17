@@ -13,10 +13,12 @@ A self-hosted app for saving and managing YouTube video bookmarks with built-in 
 - **Refresh** — regenerate summary + FAQ together without re-transcribing
 - **Semantic search** — vector similarity search across transcript chunks using Gemini embeddings + sqlite-vec; all queries are saved to the database so AI can analyse search history and surface patterns
 - **AI Brains** — curated knowledge bases: group videos into brains, chat with brain-scoped RAG context, full summary/FAQ UI, auto-assign by channel name and embedding similarity after transcription, brain badges on video rows, bulk download all content
+- **Publish Brains to OpenAI** — one-click publish a brain as an OpenAI-backed knowledge base (vector store + `file_search`); sync new videos incrementally; chat with it via GPT-4o-mini. Vendor-abstracted `BrainProvider` interface makes it straightforward to add future providers (Gemini File Search, Anthropic, etc.)
+- **Chat provider toggle** — per-brain chat switches between Local (Gemini + sqlite-vec RAG) and OpenAI (hosted vector store) with a single click
 - **Chat with your videos** — RAG-powered chat drawer with SSE streaming, embedded YouTube player, clickable timestamps, and save conversation to file and database
 - **Delete transcripts** — cascades to embeddings, summary, and FAQ; Process button reappears
 - **Import bookmarks** from Chrome
-- **Configurable settings** — choose transcription provider, Gemini model, manage embeddings, and customize your profile
+- **Configurable settings** — choose transcription provider, Gemini model, manage embeddings, view all API key status, and customize your profile
 - **Brain badges** — video rows show purple pills for brain membership, clickable to navigate directly to the brain
 - **Save content to file** — download transcripts, summaries, and chat conversations as `.txt` files with datetime-stamped filenames
 - **Paginated list view** with 6 columns: Thumbnail | Info | Summary | FAQ | Transcript | Actions
@@ -28,8 +30,9 @@ A self-hosted app for saving and managing YouTube video bookmarks with built-in 
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- An [AssemblyAI API key](https://www.assemblyai.com/) (for transcription via AssemblyAI)
 - A [Google AI API key](https://aistudio.google.com/apikey) (for summaries, chat, embeddings, and optional Gemini transcription)
+- An [AssemblyAI API key](https://www.assemblyai.com/) *(optional — for AssemblyAI transcription)*
+- An [OpenAI API key](https://platform.openai.com/api-keys) *(optional — for publishing Brains to OpenAI)*
 
 ### Run
 
@@ -39,7 +42,7 @@ git clone <repo-url> && cd BookMarkManager
 
 # 2. Create your .env file
 cp .env.example .env
-# Edit .env and add your API keys (ASSEMBLYAI_API_KEY and GOOGLE_API_KEY)
+# Edit .env — at minimum set GOOGLE_API_KEY
 
 # 3. Start the app
 docker compose up --build
@@ -54,7 +57,7 @@ docker compose up --build
 # Normal rebuild (picks up code changes)
 docker compose up -d --build
 
-# Force full rebuild (when having cache issues)
+# Force full rebuild (clears cache)
 docker compose down
 docker compose build --no-cache
 docker compose up -d
@@ -93,9 +96,10 @@ BookMarkManager/
 │   │   │   ├── AddVideoModal.jsx    # Manual video add modal
 │   │   │   ├── TranscriptModal.jsx  # Transcript viewer with embedded YouTube player
 │   │   │   ├── ChatDrawer.jsx       # RAG-powered chat drawer (Gemini + vector search)
+│   │   │   ├── ProcessModal.jsx     # Real-time pipeline progress modal
 │   │   │   ├── Sidebar.jsx          # Left navigation (Videos, Brains, Settings)
 │   │   │   ├── SettingsPage.jsx     # Unified settings (profile, model, provider, embeddings, API status)
-│   │   │   └── BrainsPage.jsx       # AI Brains — curated knowledge bases with scoped chat
+│   │   │   └── BrainsPage.jsx       # AI Brains — curated knowledge bases with scoped chat + OpenAI publish
 │   │   ├── services/
 │   │   │   └── api.js               # API service layer (fetch + SSE streaming)
 │   │   ├── utils/
@@ -106,19 +110,22 @@ BookMarkManager/
 ├── backend/                         # Flask API + SQLite + sqlite-vec
 │   ├── app/
 │   │   ├── __init__.py              # Serves SPA from /app/static
-│   │   ├── routes.py                # API endpoints
+│   │   ├── routes.py                # All API endpoints
 │   │   ├── models.py                # SQLite models (Video, Transcript, Job, Setting, Brain, SavedChat)
-│   │   ├── database.py              # DB connection + schema + sqlite-vec extension
-│   │   ├── gemini_service.py        # Gemini integration (summaries, FAQ, RAG chat)
+│   │   ├── database.py              # DB connection + schema + idempotent migrations + sqlite-vec
+│   │   ├── gemini_service.py        # Gemini integration (summaries, FAQ, RAG chat streaming)
 │   │   ├── embedding_service.py     # Gemini embeddings + sqlite-vec vector search
 │   │   ├── brain_service.py         # Brain-scoped RAG search, chat, auto-assign
-│   │   ├── transcription_service.py # yt-dlp + AssemblyAI/Gemini transcription + auto-summarize
+│   │   ├── brain_providers/         # Vendor-abstracted brain provider system
+│   │   │   ├── __init__.py          # Registry: get_provider(), list_providers()
+│   │   │   ├── base.py              # BrainProvider abstract base class
+│   │   │   └── openai_provider.py   # OpenAI vector store + file_search implementation
+│   │   ├── transcription_service.py # yt-dlp + AssemblyAI/Gemini transcription + auto-summarize + auto-embed
 │   │   ├── bookmarks.py             # Chrome bookmarks parser
 │   │   └── transcripts.py           # Transcript search + status helpers
 │   ├── run.py
 │   ├── mcp_server.py                # MCP server — AI model access via SSE (port 8001)
 │   └── requirements.txt
-├── sql/                             # Schema and query references
 ├── .env.example
 ├── .mcp.json                        # MCP server config for Claude Code
 ├── entrypoint.sh                    # Starts both Flask + MCP server in one container
@@ -126,22 +133,49 @@ BookMarkManager/
 └── docker-compose.yaml              # Single service, ports 5000 (Flask) + 8001 (MCP)
 ```
 
-**Stack:** React, Vite, Flask, SQLite, sqlite-vec, Gunicorn, yt-dlp, AssemblyAI, Google Gemini, MCP, Docker
+**Stack:** React, Vite, Flask, SQLite, sqlite-vec, Gunicorn, yt-dlp, AssemblyAI, Google Gemini, OpenAI, MCP, Docker
 
 ### How It Works
 
 - **Frontend** is built at Docker image build time and served as static files by Flask
 - **Backend** exposes a REST API under `/api/*` and serves the SPA for all other routes
-- **Processing pipeline** — a single "Process" button chains the full pipeline in a background thread: yt-dlp downloads audio → AssemblyAI or Gemini transcribes with `[M:SS]` timestamps → Gemini generates a short narrative summary + FAQ → transcript chunks are auto-embedded for vector search → video is auto-assigned to matching brains. The frontend polls every 4 seconds for status updates.
+- **Processing pipeline** — a single "Process" button chains the full pipeline in a background thread: yt-dlp downloads audio → AssemblyAI or Gemini transcribes with `[M:SS]` timestamps → Gemini generates a short narrative summary + FAQ → transcript chunks are auto-embedded for vector search → video is auto-assigned to matching brains. The frontend polls every 4 seconds for status updates via the ProcessModal.
 - **Stored transcripts** include the video title and YouTube URL as a header line; summaries also embed the video URL for source attribution
 - **Embeddings** use Gemini's `gemini-embedding-001` model (768-dim) to embed transcript chunks into a sqlite-vec virtual table for KNN similarity search
 - **Semantic search** embeds the query via Gemini, runs KNN against the vector store, and returns the best-matching transcript chunks grouped by video
 - **AI Brains** let you group videos into curated knowledge bases with brain-scoped RAG chat, full summary/FAQ controls, and a bulk "Download All Content" export. Videos are auto-assigned to brains by channel name on save, and by embedding similarity (>0.85 cosine) after transcription. Brain badges on video rows link back to the brain detail view.
+- **OpenAI Brain publishing** — each brain can be published to OpenAI as a vector store. Videos are uploaded as structured Markdown files (title + channel + summary + FAQ + transcript). The `BrainProvider` interface in `brain_providers/` is vendor-agnostic; the OpenAI adapter is the first implementation. Chat routes to OpenAI via the Responses API with `file_search` when the OpenAI provider is selected. Sync incrementally uploads new videos and removes deleted ones. Per-video file IDs are tracked in `brain_provider_files`.
 - **Summaries** are short 2-4 sentence narratives generated by Gemini. **FAQ** is a separate 5-10 Q&A set stored in its own column. Both are generated automatically during the Process pipeline and can be regenerated together via the Refresh button.
 - **Save to file** — transcripts, summaries, and chat conversations can be downloaded as `.txt` files. Filenames follow the pattern `{type}_{datetime}.txt`.
 - **Chat (RAG)** retrieves the top-k matching transcript chunks via vector search (falls back to summaries + FAQ), passes them as context to Gemini, and streams the response via SSE
 - **MCP server** runs alongside Flask in the same container (started via `entrypoint.sh`). It's a standalone Python process with direct SQLite access — no Flask dependency. Transcription requests are proxied to the Flask API since they need Flask's background threads.
 - **Data** is persisted in a SQLite database on a Docker volume (`backend/data/`)
+
+## OpenAI Brain Publishing
+
+Each Brain can be published to OpenAI as a hosted knowledge base, enabling chat powered by GPT-4o-mini with OpenAI's `file_search` tool.
+
+### How to publish
+
+1. Add `OPENAI_API_KEY=sk-...` to your `.env` and rebuild
+2. Open any Brain that has processed videos (with transcripts/summaries/FAQs)
+3. Click **Publish to OpenAI** in the brain detail header
+4. Once published, the brain header shows a green **OpenAI** badge with Sync / Unpublish buttons
+5. In the **Chat** tab, click **OpenAI** to switch from local Gemini RAG to the hosted vector store
+
+### Sync
+
+Clicking **Sync** uploads any new videos added to the brain since the last publish, and removes files for any videos that were removed. No full rebuild needed.
+
+### Cost
+
+- **Vector storage**: free up to 1 GB/day; $0.10/GB/day above that (transcripts are tiny — thousands of videos fit in the free tier)
+- **Per query**: ~$0.005–0.01 (file_search retrieval + gpt-4o-mini tokens)
+- Monitor usage at [platform.openai.com/usage](https://platform.openai.com/usage) and set a spend cap in OpenAI billing settings
+
+### Adding future providers
+
+Implement `BrainProvider` in `backend/app/brain_providers/` and register it in `__init__.py`. The rest of the app routes through the interface — no other changes needed.
 
 ## MCP Server
 
@@ -203,7 +237,6 @@ cd backend && python mcp_server.py
 | `GET` | `/api/jobs/video/<video_id>` | Get active job for a video |
 | `GET` | `/api/transcripts/<id>` | Get transcript text |
 | `DELETE` | `/api/transcripts/<id>` | Delete transcript (cascades to embeddings + summary + FAQ) |
-| `GET` | `/api/transcripts/<id>/status` | Check transcript status |
 | `GET` | `/api/transcripts/search?q=` | Search transcripts (text) |
 | `POST` | `/api/summaries/<id>` | Regenerate short narrative summary |
 | `GET` | `/api/summaries/<id>` | Get stored summary |
@@ -212,7 +245,7 @@ cd backend && python mcp_server.py
 | `GET` | `/api/faq/<id>` | Get stored FAQ |
 | `POST` | `/api/refresh/<id>` | Regenerate summary + FAQ without re-transcribing |
 | `POST` | `/api/chat` | Stream chat response (SSE, RAG) |
-| `GET` | `/api/search?q=` | Semantic vector search (query is saved to history) |
+| `GET` | `/api/search?q=` | Semantic vector search (query saved to history) |
 | `GET` | `/api/search/history` | Recent search query history |
 | `POST` | `/api/embeddings/build` | Embed all unembedded transcripts |
 | `POST` | `/api/embeddings/rebuild` | Clear and re-embed all transcripts |
@@ -225,13 +258,18 @@ cd backend && python mcp_server.py
 | `POST` | `/api/brains/<id>/videos` | Add a video to a brain |
 | `DELETE` | `/api/brains/<id>/videos/<vid>` | Remove a video from a brain |
 | `POST` | `/api/brains/<id>/videos/bulk` | Bulk add videos to a brain |
-| `POST` | `/api/brains/<id>/chat` | Brain-scoped chat (SSE, RAG) |
+| `POST` | `/api/brains/<id>/chat` | Brain-scoped chat (SSE); body: `{message, history, provider}` — provider: `local` or `openai` |
 | `GET` | `/api/brains/suggest/<vid>` | Suggest brains for a video |
+| `POST` | `/api/brains/<id>/publish` | Publish brain to external provider; body: `{provider: "openai"}` |
+| `POST` | `/api/brains/<id>/sync` | Sync published brain with current video set |
+| `DELETE` | `/api/brains/<id>/publish` | Unpublish brain (deletes remote resources) |
+| `GET` | `/api/brains/<id>/publish/status` | Remote publish status (file counts, health) |
+| `GET` | `/api/brain-providers` | List available providers and their configuration status |
 | `GET` | `/api/settings` | Get app settings + API key status |
 | `PUT` | `/api/settings` | Update settings |
 | `GET` | `/api/stats` | Get collection statistics |
 | `POST` | `/api/chats` | Save a chat conversation to the database |
-| `GET` | `/api/chats` | List saved chat conversations (supports `?limit=` and `?source=`) |
+| `GET` | `/api/chats` | List saved chat conversations |
 | `GET` | `/api/chats/<id>` | Get a single saved chat conversation |
 | `GET` | `/api/bookmarks/chrome` | List Chrome YouTube bookmarks |
 | `POST` | `/api/bookmarks/chrome/import` | Import Chrome bookmarks |
@@ -258,10 +296,10 @@ cd backend && python mcp_server.py
 |--------|------|-------------|
 | id | INTEGER | Primary key |
 | video_id | TEXT | Foreign key to videos |
-| content | TEXT | Full transcript text (includes video title + URL header) |
+| content | TEXT | Full transcript text |
 | summary | TEXT | Short 2-4 sentence narrative summary |
 | faq | TEXT | FAQ — 5-10 Q&A pairs |
-| provider | TEXT | Transcription provider (assemblyai or gemini) |
+| provider | TEXT | Transcription provider (`assemblyai` or `gemini`) |
 | indexed_at | TEXT | Indexing timestamp |
 
 ### transcript_chunks
@@ -286,8 +324,8 @@ cd backend && python mcp_server.py
 |--------|------|-------------|
 | id | TEXT | Primary key (UUID) |
 | video_id | TEXT | Foreign key to videos |
-| job_type | TEXT | Job type (e.g., "transcribe") |
-| status | TEXT | pending / downloading / transcribing / summarizing / completed / failed |
+| job_type | TEXT | Job type (e.g., `transcribe`) |
+| status | TEXT | `pending` / `downloading` / `transcribing` / `summarizing` / `completed` / `failed` |
 | error_message | TEXT | Error details if failed |
 | created_at | TEXT | Job creation timestamp |
 | completed_at | TEXT | Job completion timestamp |
@@ -305,8 +343,11 @@ cd backend && python mcp_server.py
 | Column | Type | Description |
 |--------|------|-------------|
 | id | TEXT | Primary key (UUID) |
-| name | TEXT | Brain name (max 100 chars) |
-| description | TEXT | Optional description (max 500 chars) |
+| name | TEXT | Brain name |
+| description | TEXT | Optional description |
+| provider | TEXT | Active external provider (`openai`, or null if local only) |
+| provider_config | TEXT | JSON blob of provider-specific IDs (e.g. `{"vector_store_id": "vs_..."}`) |
+| provider_synced_at | TEXT | Last sync timestamp |
 | created_at | TEXT | Creation timestamp |
 | updated_at | TEXT | Last update timestamp |
 
@@ -317,6 +358,17 @@ cd backend && python mcp_server.py
 | brain_id | TEXT | Foreign key to brains (composite PK) |
 | video_id | TEXT | Foreign key to videos (composite PK) |
 | added_at | TEXT | When video was added to brain |
+
+### brain_provider_files
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Primary key |
+| brain_id | TEXT | Foreign key to brains |
+| video_id | TEXT | YouTube video ID |
+| provider | TEXT | Provider type (e.g. `openai`) |
+| remote_file_id | TEXT | File ID on the remote provider |
+| uploaded_at | TEXT | Upload timestamp |
 
 ### search_queries
 
@@ -332,18 +384,20 @@ cd backend && python mcp_server.py
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER | Primary key |
-| source | TEXT | `global` (main chat drawer) or `brain` (brain-scoped chat) |
+| source | TEXT | `global` or `brain` |
 | brain_id | TEXT | Foreign key to brains (null for global chats) |
-| messages | TEXT | Full conversation as JSON array (`[{role, content}]`) |
+| messages | TEXT | Full conversation as JSON array |
 | saved_at | TEXT | ISO8601 timestamp |
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ASSEMBLYAI_API_KEY` | For transcription | Your AssemblyAI API key |
-| `GOOGLE_API_KEY` | For summaries, chat, embeddings | Your Google AI API key |
-| `GEMINI_MODEL` | No (default: `gemini-2.5-flash`) | Gemini model to use |
+| `GOOGLE_API_KEY` | Yes | Google AI API key — used for summaries, chat, embeddings, and optional Gemini transcription |
+| `ASSEMBLYAI_API_KEY` | Optional | AssemblyAI API key — required only if using AssemblyAI as the transcription provider |
+| `GEMINI_MODEL` | No (default: `gemini-2.5-flash`) | Gemini model to use for summaries and chat |
+| `OPENAI_API_KEY` | Optional | OpenAI API key — required only if publishing Brains to OpenAI |
+| `OPENAI_MODEL` | No (default: `gpt-4o-mini`) | OpenAI model used for brain chat queries |
 
 Available Gemini model options:
 - `gemini-2.5-flash` — stable, fast, good price/performance (default)

@@ -369,16 +369,81 @@ class Brain:
         return [{'id': row['id'], 'name': row['name']} for row in rows]
 
     @staticmethod
+    def set_provider(brain_id, provider, config):
+        db = get_db()
+        db.execute(
+            'UPDATE brains SET provider = ?, provider_config = ?, provider_synced_at = ?, updated_at = ? WHERE id = ?',
+            (
+                provider,
+                json.dumps(config) if config is not None else None,
+                datetime.utcnow().isoformat(),
+                datetime.utcnow().isoformat(),
+                brain_id,
+            )
+        )
+        db.commit()
+
+    @staticmethod
+    def clear_provider(brain_id):
+        db = get_db()
+        db.execute(
+            'UPDATE brains SET provider = NULL, provider_config = NULL, provider_synced_at = NULL, updated_at = ? WHERE id = ?',
+            (datetime.utcnow().isoformat(), brain_id)
+        )
+        db.execute(
+            'DELETE FROM brain_provider_files WHERE brain_id = ?',
+            (brain_id,)
+        )
+        db.commit()
+
+    @staticmethod
+    def get_provider_files(brain_id, provider):
+        db = get_db()
+        rows = db.execute(
+            'SELECT video_id, remote_file_id FROM brain_provider_files WHERE brain_id = ? AND provider = ?',
+            (brain_id, provider)
+        ).fetchall()
+        return {row['video_id']: row['remote_file_id'] for row in rows}
+
+    @staticmethod
+    def record_provider_file(brain_id, provider, video_id, remote_file_id):
+        db = get_db()
+        db.execute(
+            'INSERT OR REPLACE INTO brain_provider_files (brain_id, provider, video_id, remote_file_id) VALUES (?, ?, ?, ?)',
+            (brain_id, provider, video_id, remote_file_id)
+        )
+        db.commit()
+
+    @staticmethod
+    def remove_provider_file(brain_id, provider, video_id):
+        db = get_db()
+        db.execute(
+            'DELETE FROM brain_provider_files WHERE brain_id = ? AND provider = ? AND video_id = ?',
+            (brain_id, provider, video_id)
+        )
+        db.commit()
+
+    @staticmethod
     def row_to_dict(row):
         if row is None:
             return None
+        keys = row.keys()
+        provider_config = None
+        if 'provider_config' in keys and row['provider_config']:
+            try:
+                provider_config = json.loads(row['provider_config'])
+            except (ValueError, TypeError):
+                provider_config = None
         return {
             'id': row['id'],
             'name': row['name'],
             'description': row['description'],
-            'videoCount': row['video_count'] if 'video_count' in row.keys() else 0,
+            'videoCount': row['video_count'] if 'video_count' in keys else 0,
             'createdAt': row['created_at'],
             'updatedAt': row['updated_at'],
+            'provider': row['provider'] if 'provider' in keys else None,
+            'providerConfig': provider_config,
+            'providerSyncedAt': row['provider_synced_at'] if 'provider_synced_at' in keys else None,
         }
 
 

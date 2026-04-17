@@ -393,12 +393,12 @@ class ApiService {
     return response.json();
   }
 
-  async brainChatStream(brainId, message, history, onChunk, onDone, onError) {
+  async brainChatStream(brainId, message, history, onChunk, onDone, onError, provider = 'local') {
     try {
       const response = await fetch(`${API_BASE}/brains/${brainId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, history }),
+        body: JSON.stringify({ message, history, provider }),
       });
 
       if (!response.ok) {
@@ -453,6 +453,55 @@ class ApiService {
   async suggestBrains(videoId) {
     const response = await fetch(`${API_BASE}/brains/suggest/${videoId}`);
     if (!response.ok) throw new Error('Failed to get brain suggestions');
+    return response.json();
+  }
+
+  // Brain provider (publish / sync / status / unpublish)
+
+  async publishBrain(brainId, provider = 'openai') {
+    const response = await fetch(`${API_BASE}/brains/${brainId}/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to publish brain');
+    }
+    return response.json();
+  }
+
+  async syncBrain(brainId) {
+    const response = await fetch(`${API_BASE}/brains/${brainId}/sync`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to sync brain');
+    }
+    return response.json();
+  }
+
+  async unpublishBrain(brainId) {
+    const response = await fetch(`${API_BASE}/brains/${brainId}/publish`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to unpublish brain');
+    }
+    return response.json();
+  }
+
+  async getBrainPublishStatus(brainId) {
+    const response = await fetch(`${API_BASE}/brains/${brainId}/publish/status`);
+    if (!response.ok) throw new Error('Failed to fetch brain publish status');
+    return response.json();
+  }
+
+  async listBrainProviders() {
+    const response = await fetch(`${API_BASE}/brain-providers`);
+    if (!response.ok) throw new Error('Failed to fetch brain providers');
     return response.json();
   }
 }

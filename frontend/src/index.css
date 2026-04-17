@@ -1850,6 +1850,24 @@ button.status-indicator.clickable:hover {
   white-space: nowrap;
 }
 
+.brain-publish-badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: rgba(16, 163, 127, 0.18);
+  color: #10a37f;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.brain-chat-provider {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: auto;
+}
+
 /* Brain Tabs */
 .brain-tabs {
   display: flex;

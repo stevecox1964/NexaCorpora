@@ -5,6 +5,7 @@ gunicorn==21.2.0
 yt-dlp
 assemblyai==0.17.0
 google-genai
+openai
 sqlite-vec
 numpy
 mcp[cli]

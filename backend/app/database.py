@@ -140,6 +140,32 @@ def init_db(app):
         db.execute('CREATE INDEX IF NOT EXISTS idx_brain_videos_brain_id ON brain_videos(brain_id)')
         db.execute('CREATE INDEX IF NOT EXISTS idx_brain_videos_video_id ON brain_videos(video_id)')
 
+        # Brain provider fields — which external LLM host the brain is published to
+        for column_sql in (
+            "ALTER TABLE brains ADD COLUMN provider TEXT",
+            "ALTER TABLE brains ADD COLUMN provider_config TEXT",
+            "ALTER TABLE brains ADD COLUMN provider_synced_at TEXT",
+        ):
+            try:
+                db.execute(column_sql)
+            except Exception:
+                pass  # Column already exists
+
+        # Tracks per-video files uploaded to an external provider, for incremental sync
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS brain_provider_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                brain_id TEXT NOT NULL,
+                video_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                remote_file_id TEXT NOT NULL,
+                uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(brain_id, video_id, provider),
+                FOREIGN KEY (brain_id) REFERENCES brains (id) ON DELETE CASCADE
+            )
+        ''')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_brain_provider_files_brain ON brain_provider_files(brain_id, provider)')
+
         # Search query history — persists user queries for AI analysis
         db.execute('''
             CREATE TABLE IF NOT EXISTS search_queries (

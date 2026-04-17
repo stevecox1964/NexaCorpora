@@ -437,7 +437,8 @@ def get_settings():
         'settings': settings,
         'apiKeys': {
             'assemblyai': bool(os.environ.get('ASSEMBLYAI_API_KEY')),
-            'google': bool(os.environ.get('GOOGLE_API_KEY'))
+            'google': bool(os.environ.get('GOOGLE_API_KEY')),
+            'openai': bool(os.environ.get('OPENAI_API_KEY'))
         }
     })
 
@@ -728,7 +729,12 @@ def add_brain_videos_bulk(brain_id):
 
 @bp.route('/brains/<brain_id>/chat', methods=['POST'])
 def brain_chat(brain_id):
-    """Stream a chat response scoped to a brain's knowledge base."""
+    """Stream a chat response scoped to a brain's knowledge base.
+
+    Body param `provider` selects the backend:
+      - omitted / "local" → existing Gemini + sqlite-vec RAG
+      - "openai" → routed through the brain's published OpenAI vector store
+    """
     brain = Brain.get_by_id(brain_id)
     if not brain:
         return jsonify({'success': False, 'error': 'Brain not found'}), 404
@@ -739,13 +745,31 @@ def brain_chat(brain_id):
 
     user_message = data['message']
     conversation_history = data.get('history', [])
+    provider_choice = (data.get('provider') or 'local').lower()
+
+    def sse_error(msg):
+        return Response(
+            stream_with_context(iter([f"data: {json.dumps({'error': msg})}\n\n"])),
+            mimetype='text/event-stream',
+        )
 
     try:
-        from .brain_service import chat_with_brain
+        if provider_choice == 'openai':
+            if not brain.get('provider') == 'openai' or not (brain.get('providerConfig') or {}).get('vector_store_id'):
+                return sse_error('This brain is not published to OpenAI yet.')
+
+            from .brain_providers import get_provider
+            provider = get_provider('openai')
+            if not provider.is_available():
+                return sse_error('OPENAI_API_KEY is not set on the server.')
+            stream_fn = lambda: provider.query(brain, user_message, conversation_history)
+        else:
+            from .brain_service import chat_with_brain
+            stream_fn = lambda: chat_with_brain(brain_id, user_message, conversation_history)
 
         def generate():
             try:
-                for chunk in chat_with_brain(brain_id, user_message, conversation_history):
+                for chunk in stream_fn():
                     yield f"data: {json.dumps({'text': chunk})}\n\n"
                 yield f"data: {json.dumps({'done': True})}\n\n"
             except ValueError as e:
@@ -763,6 +787,172 @@ def brain_chat(brain_id):
         )
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Brain provider (publish / sync / status / unpublish) endpoints
+
+def _collect_brain_videos_for_provider(brain_id):
+    """Gather every video in the brain with its transcript/summary/faq for upload."""
+    from .database import get_db
+    db = get_db()
+    video_ids = Brain.get_video_ids(brain_id)
+    if not video_ids:
+        return []
+
+    placeholders = ','.join('?' * len(video_ids))
+    rows = db.execute(f'''
+        SELECT v.video_id, v.video_title, v.channel_name, v.video_url,
+               t.content AS transcript, t.summary, t.faq
+        FROM videos v
+        LEFT JOIN transcripts t ON t.video_id = v.video_id
+        WHERE v.video_id IN ({placeholders})
+    ''', video_ids).fetchall()
+
+    videos = []
+    for row in rows:
+        has_content = any([(row['transcript'] or '').strip(),
+                           (row['summary'] or '').strip(),
+                           (row['faq'] or '').strip()])
+        if not has_content:
+            continue
+        videos.append({
+            'video_id': row['video_id'],
+            'video_title': row['video_title'],
+            'channel_name': row['channel_name'],
+            'video_url': row['video_url'],
+            'transcript': row['transcript'] or '',
+            'summary': row['summary'] or '',
+            'faq': row['faq'] or '',
+        })
+    return videos
+
+
+@bp.route('/brains/<brain_id>/publish', methods=['POST'])
+def publish_brain(brain_id):
+    """Publish a brain to an external provider. Body: {"provider": "openai"}."""
+    brain = Brain.get_by_id(brain_id)
+    if not brain:
+        return jsonify({'success': False, 'error': 'Brain not found'}), 404
+
+    data = request.get_json() or {}
+    provider_type = (data.get('provider') or 'openai').lower()
+
+    try:
+        from .brain_providers import get_provider
+        provider = get_provider(provider_type)
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+    if not provider.is_available():
+        return jsonify({'success': False, 'error': f'{provider.display_name} is not configured (missing API key).'}), 400
+
+    if brain.get('provider'):
+        return jsonify({'success': False, 'error': f'Brain is already published to {brain["provider"]}. Unpublish first or call /sync.'}), 400
+
+    videos = _collect_brain_videos_for_provider(brain_id)
+    if not videos:
+        return jsonify({'success': False, 'error': 'No videos in this brain have transcripts, summaries, or FAQs to upload.'}), 400
+
+    try:
+        config = provider.publish(brain, videos)
+        Brain.set_provider(brain_id, provider_type, config)
+        return jsonify({
+            'success': True,
+            'brain': Brain.get_by_id(brain_id),
+            'status': provider.status(Brain.get_by_id(brain_id)),
+            'videoCount': len(videos),
+        })
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Publish failed: {str(e)}'}), 500
+
+
+@bp.route('/brains/<brain_id>/sync', methods=['POST'])
+def sync_brain(brain_id):
+    """Incrementally sync a published brain with current video set."""
+    brain = Brain.get_by_id(brain_id)
+    if not brain:
+        return jsonify({'success': False, 'error': 'Brain not found'}), 404
+
+    provider_type = brain.get('provider')
+    if not provider_type:
+        return jsonify({'success': False, 'error': 'Brain is not published yet.'}), 400
+
+    try:
+        from .brain_providers import get_provider
+        provider = get_provider(provider_type)
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+    if not provider.is_available():
+        return jsonify({'success': False, 'error': f'{provider.display_name} is not configured.'}), 400
+
+    videos = _collect_brain_videos_for_provider(brain_id)
+
+    try:
+        config = provider.sync(brain, videos)
+        Brain.set_provider(brain_id, provider_type, config)
+        return jsonify({
+            'success': True,
+            'brain': Brain.get_by_id(brain_id),
+            'status': provider.status(Brain.get_by_id(brain_id)),
+            'videoCount': len(videos),
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Sync failed: {str(e)}'}), 500
+
+
+@bp.route('/brains/<brain_id>/publish', methods=['DELETE'])
+def unpublish_brain(brain_id):
+    """Tear down a brain's remote resources and clear its provider state."""
+    brain = Brain.get_by_id(brain_id)
+    if not brain:
+        return jsonify({'success': False, 'error': 'Brain not found'}), 404
+
+    provider_type = brain.get('provider')
+    if not provider_type:
+        return jsonify({'success': True, 'brain': brain, 'message': 'Brain was not published.'})
+
+    try:
+        from .brain_providers import get_provider
+        provider = get_provider(provider_type)
+        if provider.is_available():
+            provider.unpublish(brain)
+    except Exception as e:
+        # Still clear local state so we don't get stuck
+        import logging
+        logging.getLogger(__name__).warning(f'Unpublish call failed but clearing local state: {e}')
+
+    Brain.clear_provider(brain_id)
+    return jsonify({'success': True, 'brain': Brain.get_by_id(brain_id)})
+
+
+@bp.route('/brains/<brain_id>/publish/status', methods=['GET'])
+def brain_publish_status(brain_id):
+    """Return remote publish status for a brain."""
+    brain = Brain.get_by_id(brain_id)
+    if not brain:
+        return jsonify({'success': False, 'error': 'Brain not found'}), 404
+
+    provider_type = brain.get('provider')
+    if not provider_type:
+        return jsonify({'success': True, 'published': False, 'provider': None})
+
+    try:
+        from .brain_providers import get_provider
+        provider = get_provider(provider_type)
+        status = provider.status(brain)
+        return jsonify({'success': True, 'provider': provider_type, **status})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/brain-providers', methods=['GET'])
+def list_brain_providers():
+    """List available brain provider types and their configuration status."""
+    from .brain_providers import list_providers
+    return jsonify({'success': True, 'providers': list_providers()})
 
 
 @bp.route('/brains/suggest/<video_id>', methods=['GET'])

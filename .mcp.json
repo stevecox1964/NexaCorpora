@@ -1,8 +1,12 @@
 {
   "mcpServers": {
     "bookmarkmanager": {
-      "type": "sse",
-      "url": "http://localhost:8001/sse"
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://localhost:8001/mcp"
+      ]
     }
   }
 }

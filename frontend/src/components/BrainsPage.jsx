@@ -28,7 +28,12 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [chatStreaming, setChatStreaming] = useState(false);
+  const [chatProvider, setChatProvider] = useState('local'); // 'local' | 'openai'
   const [playerVideoId, setPlayerVideoId] = useState(null);
+
+  // Publish state
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [publishError, setPublishError] = useState(null);
   const chatEndRef = useRef(null);
   const chatInputRef = useRef(null);
   const playerRef = useRef(null);
@@ -76,6 +81,8 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
     setActiveTab('videos');
     setChatMessages([]);
     setChatInput('');
+    setChatProvider('local');
+    setPublishError(null);
     closePlayer();
     loadBrainDetail(brainId);
   };
@@ -94,6 +101,52 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
       handleBack();
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const handlePublishBrain = async () => {
+    if (!selectedBrainId || publishBusy) return;
+    if (!confirm('Publish this brain to OpenAI? All videos with transcripts/summaries/FAQs will be uploaded to a new OpenAI vector store.')) return;
+    setPublishBusy(true);
+    setPublishError(null);
+    try {
+      await apiService.publishBrain(selectedBrainId, 'openai');
+      await loadBrainDetail(selectedBrainId);
+      setChatProvider('openai');
+    } catch (err) {
+      setPublishError(err.message);
+    } finally {
+      setPublishBusy(false);
+    }
+  };
+
+  const handleSyncBrain = async () => {
+    if (!selectedBrainId || publishBusy) return;
+    setPublishBusy(true);
+    setPublishError(null);
+    try {
+      await apiService.syncBrain(selectedBrainId);
+      await loadBrainDetail(selectedBrainId);
+    } catch (err) {
+      setPublishError(err.message);
+    } finally {
+      setPublishBusy(false);
+    }
+  };
+
+  const handleUnpublishBrain = async () => {
+    if (!selectedBrainId || publishBusy) return;
+    if (!confirm('Unpublish this brain from OpenAI? The remote vector store and all uploaded files will be deleted. Your local brain is untouched.')) return;
+    setPublishBusy(true);
+    setPublishError(null);
+    try {
+      await apiService.unpublishBrain(selectedBrainId);
+      await loadBrainDetail(selectedBrainId);
+      setChatProvider('local');
+    } catch (err) {
+      setPublishError(err.message);
+    } finally {
+      setPublishBusy(false);
     }
   };
 
@@ -290,7 +343,8 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
           return updated;
         });
         setChatStreaming(false);
-      }
+      },
+      chatProvider,
     );
   };
 
@@ -430,10 +484,28 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
           {brainDetail?.description && <p>{brainDetail.description}</p>}
         </div>
         <span className="brain-detail-count">{brainDetail?.videoCount || 0} videos</span>
+        {brainDetail?.provider === 'openai' ? (
+          <>
+            <span className="brain-publish-badge" title={`Published to OpenAI${brainDetail?.providerSyncedAt ? ' — last synced ' + new Date(brainDetail.providerSyncedAt).toLocaleString() : ''}`}>
+              OpenAI
+            </span>
+            <button className="btn btn-sm btn-secondary" onClick={handleSyncBrain} disabled={publishBusy} title="Upload any new videos to the OpenAI store">
+              {publishBusy ? 'Syncing...' : 'Sync'}
+            </button>
+            <button className="btn btn-sm btn-secondary" onClick={handleUnpublishBrain} disabled={publishBusy}>
+              Unpublish
+            </button>
+          </>
+        ) : (
+          <button className="btn btn-sm btn-primary" onClick={handlePublishBrain} disabled={publishBusy} title="Upload this brain's videos to an OpenAI vector store so you can chat with it as a custom GPT">
+            {publishBusy ? 'Publishing...' : 'Publish to OpenAI'}
+          </button>
+        )}
         <button className="btn btn-sm btn-danger" onClick={handleDeleteBrain}>Delete</button>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {publishError && <div className="error-banner">{publishError}</div>}
 
       <div className="brain-tabs">
         <button
@@ -625,10 +697,28 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
       {activeTab === 'chat' && (
         <div className="brain-chat">
           <div className="brain-chat-toolbar">
+            <div className="brain-chat-provider" role="group" aria-label="Chat backend">
+              <button
+                className={`btn btn-sm ${chatProvider === 'local' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setChatProvider('local')}
+                disabled={chatStreaming}
+                title="Local Gemini RAG (sqlite-vec)"
+              >
+                Local (Gemini)
+              </button>
+              <button
+                className={`btn btn-sm ${chatProvider === 'openai' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setChatProvider('openai')}
+                disabled={chatStreaming || brainDetail?.provider !== 'openai'}
+                title={brainDetail?.provider === 'openai' ? 'Chat via OpenAI custom GPT (file_search)' : 'Publish this brain to OpenAI first'}
+              >
+                OpenAI
+              </button>
+            </div>
             <button
               className="btn btn-sm btn-secondary"
               onClick={() => {
-                const header = `Brain: ${brainDetail?.name || 'Unknown'}\n\n`;
+                const header = `Brain: ${brainDetail?.name || 'Unknown'} (${chatProvider})\n\n`;
                 const text = chatMessages.map(m => `[${m.role === 'user' ? 'You' : 'Assistant'}]\n${m.content}`).join('\n\n');
                 saveToFile(header + text, 'chat');
                 apiService.saveChat(chatMessages, 'brain', brainDetail?.id).catch(() => {});
