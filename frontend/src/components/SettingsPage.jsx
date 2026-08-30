@@ -12,6 +12,9 @@ function SettingsPage() {
   const [embeddingStatus, setEmbeddingStatus] = useState(null);
   const [buildingEmbeddings, setBuildingEmbeddings] = useState(false);
   const [rebuildingEmbeddings, setRebuildingEmbeddings] = useState(false);
+  const [models, setModels] = useState([]);
+  const [modelsError, setModelsError] = useState(null);
+  const [refreshingModels, setRefreshingModels] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -19,19 +22,42 @@ function SettingsPage() {
 
   const loadData = async () => {
     try {
-      const [settingsData, statsData, embData] = await Promise.all([
+      const [settingsData, statsData, embData, modelData] = await Promise.all([
         apiService.getSettings(),
         apiService.getStats(),
         apiService.getEmbeddingStatus().catch(() => null),
+        apiService.getModels().catch(() => null),
       ]);
       setSettings(settingsData.settings || {});
       setApiKeys(settingsData.apiKeys || {});
       setStats(statsData);
       if (embData) setEmbeddingStatus(embData);
+      applyModelData(modelData);
     } catch (err) {
       console.error('Failed to load settings:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const applyModelData = (modelData) => {
+    if (!modelData || !modelData.models || modelData.models.length === 0) {
+      setModels([]);
+      setModelsError(modelData?.error || 'Could not reach Google. Showing known models.');
+      return;
+    }
+    setModels(modelData.models);
+    setModelsError(null);
+  };
+
+  const handleRefreshModels = async () => {
+    setRefreshingModels(true);
+    try {
+      applyModelData(await apiService.getModels(true));
+    } catch (err) {
+      setModelsError(err.message);
+    } finally {
+      setRefreshingModels(false);
     }
   };
 
@@ -101,6 +127,18 @@ function SettingsPage() {
   const profileSubtitle = settings.profile_subtitle || 'YouTube Bookmark Collection';
   const currentProvider = settings.transcription_provider || 'assemblyai';
   const currentModel = settings.gemini_model || 'gemini-2.5-flash';
+
+  // Live list from Google, or a known-good fallback if that call failed.
+  // The saved model is always present so the dropdown never loses the current value.
+  const FALLBACK_MODELS = [
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
+    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
+  ];
+  const baseModels = models.length > 0 ? models : FALLBACK_MODELS;
+  const modelOptions = baseModels.some((m) => m.id === currentModel)
+    ? baseModels
+    : [{ id: currentModel, label: 'saved' }, ...baseModels];
 
   return (
     <div className="settings-page">
@@ -197,12 +235,27 @@ function SettingsPage() {
           className="settings-select"
           value={currentModel}
           onChange={(e) => handleUpdate('gemini_model', e.target.value)}
-          disabled={saving}
+          disabled={saving || refreshingModels}
         >
-          <option value="gemini-2.5-flash">gemini-2.5-flash (recommended)</option>
-          <option value="gemini-3-flash-preview">gemini-3-flash-preview (newest, preview)</option>
-          <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (cheapest)</option>
+          {modelOptions.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.id}{m.label && m.label !== m.id ? ` — ${m.label}` : ''}
+            </option>
+          ))}
         </select>
+        <button
+          className="btn-secondary"
+          onClick={handleRefreshModels}
+          disabled={refreshingModels}
+          style={{ marginLeft: '8px' }}
+        >
+          {refreshingModels ? 'Refreshing...' : 'Refresh list'}
+        </button>
+        {modelsError && (
+          <p className="settings-description" style={{ color: '#e8a33d' }}>
+            {modelsError}
+          </p>
+        )}
       </div>
 
       {/* Transcription Provider */}

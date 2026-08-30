@@ -443,6 +443,24 @@ def get_settings():
     })
 
 
+@bp.route('/models', methods=['GET'])
+def list_models():
+    """List chat-capable Gemini models, fetched live from Google."""
+    from .gemini_service import list_available_models
+    refresh = request.args.get('refresh') == '1'
+    try:
+        models = list_available_models(force_refresh=refresh)
+        return jsonify({'success': True, 'models': models, 'source': 'google'})
+    except Exception as e:
+        current_app.logger.warning(f'Model list fetch failed: {e}')
+        return jsonify({
+            'success': True,
+            'models': [],
+            'source': 'unavailable',
+            'error': str(e)
+        })
+
+
 @bp.route('/settings', methods=['PUT'])
 def update_settings():
     """Update application settings."""
@@ -451,13 +469,15 @@ def update_settings():
         return jsonify({'success': False, 'error': 'No data provided'}), 400
 
     validated_keys = {
-        'transcription_provider': ['assemblyai', 'gemini'],
-        'gemini_model': ['gemini-2.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash-lite']
+        'transcription_provider': ['assemblyai', 'gemini']
     }
     freetext_keys = {'profile_name', 'profile_subtitle'}
 
     for key, value in data.items():
-        if key in validated_keys:
+        if key == 'gemini_model':
+            if not isinstance(value, str) or not value.startswith('gemini-'):
+                return jsonify({'success': False, 'error': f'Invalid model: {value}'}), 400
+        elif key in validated_keys:
             if value not in validated_keys[key]:
                 return jsonify({'success': False, 'error': f'Invalid value for {key}: {value}'}), 400
         elif key in freetext_keys:

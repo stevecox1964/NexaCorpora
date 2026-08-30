@@ -243,6 +243,15 @@ class ApiService {
     return response.json();
   }
 
+  // List Gemini models available from Google
+  async getModels(refresh = false) {
+    const response = await fetch(`${API_BASE}/models${refresh ? '?refresh=1' : ''}`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch models');
+    }
+    return response.json();
+  }
+
   // Update application settings
   async updateSettings(settings) {
     const response = await fetch(`${API_BASE}/settings`, {

@@ -18,7 +18,7 @@ A self-hosted app for saving and managing YouTube video bookmarks with built-in 
 - **Chat with your videos** — RAG-powered chat drawer with SSE streaming, embedded YouTube player, clickable timestamps, and save conversation to file and database
 - **Delete transcripts** — cascades to embeddings, summary, and FAQ; Process button reappears
 - **Import bookmarks** from Chrome
-- **Configurable settings** — choose transcription provider, Gemini model, manage embeddings, view all API key status, and customize your profile
+- **Configurable settings** — choose transcription provider, pick any Gemini model from a live list fetched from Google, manage embeddings, view all API key status, and customize your profile
 - **Brain badges** — video rows show purple pills for brain membership, clickable to navigate directly to the brain
 - **Save content to file** — download transcripts, summaries, and chat conversations as `.txt` files with datetime-stamped filenames
 - **Paginated list view** with 6 columns: Thumbnail | Info | Summary | FAQ | Transcript | Actions
@@ -265,6 +265,7 @@ cd backend && python mcp_server.py
 | `DELETE` | `/api/brains/<id>/publish` | Unpublish brain (deletes remote resources) |
 | `GET` | `/api/brains/<id>/publish/status` | Remote publish status (file counts, health) |
 | `GET` | `/api/brain-providers` | List available providers and their configuration status |
+| `GET` | `/api/models` | List chat-capable Gemini models (live from Google; `?refresh=1` bypasses the 1-hour cache) |
 | `GET` | `/api/settings` | Get app settings + API key status |
 | `PUT` | `/api/settings` | Update settings |
 | `GET` | `/api/stats` | Get collection statistics |
@@ -395,14 +396,23 @@ cd backend && python mcp_server.py
 |----------|----------|-------------|
 | `GOOGLE_API_KEY` | Yes | Google AI API key — used for summaries, chat, embeddings, and optional Gemini transcription |
 | `ASSEMBLYAI_API_KEY` | Optional | AssemblyAI API key — required only if using AssemblyAI as the transcription provider |
-| `GEMINI_MODEL` | No (default: `gemini-2.5-flash`) | Gemini model to use for summaries and chat |
+| `GEMINI_MODEL` | No (default: `gemini-2.5-flash`) | Fallback Gemini model. The value saved in Settings takes priority |
 | `OPENAI_API_KEY` | Optional | OpenAI API key — required only if publishing Brains to OpenAI |
 | `OPENAI_MODEL` | No (default: `gpt-4o-mini`) | OpenAI model used for brain chat queries |
 
-Available Gemini model options:
-- `gemini-2.5-flash` — stable, fast, good price/performance (default)
-- `gemini-3-flash-preview` — newest, frontier-class, still in preview
-- `gemini-2.5-flash-lite` — cheapest, good for high volume
+### Gemini model selection
+
+The model dropdown in Settings is populated live from the Google API (`GET /api/models`), so new
+Gemini releases appear without a code change. The backend filters the list to text models that
+support `generateContent` and drops image, TTS, audio, live, embedding, video, and robotics models.
+Results are cached in memory for one hour; the **Refresh list** button forces a re-fetch.
+
+If Google cannot be reached, the dropdown falls back to a small known-good list
+(`gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3-flash-preview`) and shows a warning. The
+currently saved model is always kept in the list so the selection is never lost.
+
+The saved model is used for summaries, FAQ, chat, and Gemini audio transcription. Resolution order
+is: `settings.gemini_model` → `GEMINI_MODEL` env var → `gemini-2.5-flash`.
 
 ## Development
 

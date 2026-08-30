@@ -2,7 +2,7 @@ Flask==3.0.0
 Flask-CORS==4.0.0
 python-dotenv==1.0.0
 gunicorn==21.2.0
-yt-dlp
+yt-dlp>=2026.8.19
 assemblyai==0.17.0
 google-genai
 openai

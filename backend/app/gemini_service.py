@@ -2,7 +2,7 @@ import os
 import logging
 from google import genai
 from google.genai import types
-from .models import Transcript, Video
+from .models import Transcript, Video, Setting
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,12 @@ def _get_client():
 
 
 def _get_model_name():
-    return os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+    """Model from the settings table, falling back to the env default."""
+    try:
+        model = Setting.get('gemini_model')
+    except Exception:
+        model = None
+    return model or os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
 
 
 def generate_summary(video_id):
@@ -154,3 +159,44 @@ def chat_with_knowledge_base(user_message, conversation_history=None):
     ):
         if chunk.text:
             yield chunk.text
+
+
+# Model listing — fetched live from Google, cached in memory
+
+_MODEL_CACHE = {'models': None, 'fetched_at': 0}
+_MODEL_CACHE_TTL = 3600  # seconds
+
+# Substrings that mark a model as not usable for chat/summaries/transcription
+_MODEL_EXCLUDE = (
+    'image', 'banana', 'tts', 'audio', 'live', 'robotics', 'computer-use',
+    'embedding', 'veo', 'lyria', 'deep-research', 'antigravity', 'customtools',
+)
+
+
+def list_available_models(force_refresh=False):
+    """Return chat-capable Gemini model ids from the Google API.
+
+    Cached for an hour. Raises on API failure so the caller can fall back.
+    """
+    import time
+    now = time.time()
+    if (not force_refresh and _MODEL_CACHE['models']
+            and now - _MODEL_CACHE['fetched_at'] < _MODEL_CACHE_TTL):
+        return _MODEL_CACHE['models']
+
+    client = _get_client()
+    models = []
+    for m in client.models.list():
+        name = m.name.replace('models/', '')
+        if not name.startswith('gemini-'):
+            continue
+        if 'generateContent' not in (m.supported_actions or []):
+            continue
+        if any(bad in name for bad in _MODEL_EXCLUDE):
+            continue
+        models.append({'id': name, 'label': m.display_name or name})
+
+    models.sort(key=lambda x: x['id'])
+    _MODEL_CACHE['models'] = models
+    _MODEL_CACHE['fetched_at'] = now
+    return models

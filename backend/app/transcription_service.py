@@ -73,7 +73,8 @@ def transcribe_audio_gemini(audio_file_path, api_key):
     logger.info(f'Uploading audio to Gemini Files API: {audio_file_path}')
     audio_file = client.files.upload(file=audio_file_path)
 
-    model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+    from .gemini_service import _get_model_name
+    model_name = _get_model_name()
 
     logger.info(f'Requesting transcription from Gemini model: {model_name}')
     response = client.models.generate_content(

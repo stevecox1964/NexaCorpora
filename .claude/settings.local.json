@@ -24,7 +24,26 @@
       "WebFetch(domain:googleapis.github.io)",
       "WebFetch(domain:pgaleone.eu)",
       "WebFetch(domain:jduncan.io)",
-      "WebFetch(domain:pinggy.io)"
+      "WebFetch(domain:pinggy.io)",
+      "WebFetch(domain:pypi.org)",
+      "WebSearch",
+      "WebFetch(domain:gofastmcp.com)",
+      "Bash(docker compose:*)",
+      "Bash(pip show:*)",
+      "Bash(python -c \"from mcp.server.fastmcp import FastMCP; help\\(FastMCP.run\\)\")",
+      "Bash(python -c \"from mcp.server.fastmcp import FastMCP; help\\(FastMCP.__init__\\)\")",
+      "Bash(python -c \":*)",
+      "WebFetch(domain:support.claude.com)",
+      "Bash(npx --version)",
+      "mcp__bookmarkmanager__list_videos",
+      "mcp__bookmarkmanager__search_videos",
+      "mcp__bookmarkmanager__search_transcripts_text",
+      "mcp__bookmarkmanager__get_summary",
+      "mcp__bookmarkmanager__get_transcript"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "bookmarkmanager"
+  ]
 }
