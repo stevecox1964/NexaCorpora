@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import VideoCard from './components/VideoCard';
-import AddVideoModal from './components/AddVideoModal';
 import TranscriptModal from './components/TranscriptModal';
 import ProcessModal from './components/ProcessModal';
+import Thumbnail from './components/Thumbnail';
 import ChatDrawer from './components/ChatDrawer';
 import SettingsPage from './components/SettingsPage';
 import BrainsPage from './components/BrainsPage';
@@ -14,7 +14,6 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [serverOffline, setServerOffline] = useState(false);
-  const [showAddModal, setShowAddModal] = useState(false);
   const [transcriptView, setTranscriptView] = useState(null); // { videoId, videoTitle }
   const [pagination, setPagination] = useState({
     page: 1,
@@ -24,7 +23,12 @@ function App() {
     has_prev: false,
     has_next: false
   });
-  const [activePage, setActivePage] = useState('videos');
+  const [activePage, setActivePage] = useState('all'); // 'all' | 'videos' | 'pages' | 'brains' | 'settings'
+  // 'all', 'videos' and 'pages' share the same list UI, filtered by bookmark type
+  const isListPage = activePage === 'all' || activePage === 'videos' || activePage === 'pages';
+  const isPagesView = activePage === 'pages';
+  const listType = activePage === 'all' ? null : isPagesView ? 'web' : 'youtube'; // null = no filter
+  const itemLabel = activePage === 'all' ? 'bookmarks' : isPagesView ? 'web pages' : 'videos';
   const [initialBrainId, setInitialBrainId] = useState(null);
   const [summaryStates, setSummaryStates] = useState({});
   const [faqStates, setFaqStates] = useState({});
@@ -36,13 +40,13 @@ function App() {
   const [searching, setSearching] = useState(false);
   const searchTimer = useRef(null);
 
-  const fetchVideos = async (page = 1) => {
+  const fetchVideos = async (page = 1, type = listType) => {
     setLoading(true);
     setError(null);
     setServerOffline(false);
 
     try {
-      const data = await apiService.getVideos(page, pagination.per_page);
+      const data = await apiService.getVideos(page, pagination.per_page, type);
       setVideos(data.videos || []);
       if (data.pagination) {
         setPagination(data.pagination);
@@ -59,18 +63,14 @@ function App() {
     }
   };
 
+  // Reload the list whenever the user switches between Videos and Web pages
   useEffect(() => {
-    fetchVideos(1);
-  }, []);
+    if (isListPage) fetchVideos(1, listType);
+  }, [activePage]);
 
   const handlePageChange = (newPage) => {
     fetchVideos(newPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleAddVideo = async (videoData) => {
-    await apiService.addVideo(videoData);
-    await fetchVideos(1);
   };
 
   const handleDeleteVideo = async (videoId) => {
@@ -86,23 +86,6 @@ function App() {
     }
   };
 
-  const handleImportBookmarks = async () => {
-    try {
-      setLoading(true);
-      const data = await apiService.getChromeBookmarks();
-      if (data.bookmarks && data.bookmarks.length > 0) {
-        alert(`Found ${data.bookmarks.length} YouTube bookmarks in Chrome`);
-        await fetchVideos();
-      } else {
-        alert('No YouTube bookmarks found in Chrome');
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const markVideoProcessed = useCallback((videoId) => {
     setVideos(prev => prev.map(v =>
       v.videoId === videoId
@@ -113,7 +96,7 @@ function App() {
 
   const handleProcess = (videoId) => {
     const video = videos.find(v => v.videoId === videoId);
-    setProcessModal({ videoId, videoTitle: video?.videoTitle || videoId, mode: 'process' });
+    setProcessModal({ videoId, videoTitle: video?.videoTitle || videoId, video, mode: 'process' });
   };
 
   const handleProcessComplete = useCallback((videoId, data) => {
@@ -166,7 +149,7 @@ function App() {
 
   const handleRefreshSummaryFaq = (videoId) => {
     const video = videos.find(v => v.videoId === videoId);
-    setProcessModal({ videoId, videoTitle: video?.videoTitle || videoId, mode: 'refresh' });
+    setProcessModal({ videoId, videoTitle: video?.videoTitle || videoId, video, mode: 'refresh' });
   };
 
   const handleNavigateToBrain = (brainId) => {
@@ -288,28 +271,8 @@ function App() {
       <Sidebar activePage={activePage} onNavigate={setActivePage} />
 
       <main className="main-content">
-        {activePage === 'videos' && (
+        {isListPage && (
           <>
-            <header className="header">
-              <h1>YouTube Bookmark Manager</h1>
-              <div className="header-actions">
-                <button
-                  className="btn btn-secondary"
-                  onClick={handleImportBookmarks}
-                  disabled={serverOffline}
-                >
-                  Import Chrome Bookmarks
-                </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => setShowAddModal(true)}
-                  disabled={serverOffline}
-                >
-                  Add Video
-                </button>
-              </div>
-            </header>
-
             {/* Search Bar */}
             <div className="search-bar-container">
               <div className="search-bar">
@@ -381,19 +344,16 @@ function App() {
                     <div key={`${result.videoId}-${idx}`} className="search-result-card">
                       <a
                         className="search-result-thumbnail"
-                        href={`https://www.youtube.com/watch?v=${result.videoId}`}
+                        href={result.videoUrl || `https://www.youtube.com/watch?v=${result.videoId}`}
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        <img
-                          src={`https://img.youtube.com/vi/${result.videoId}/mqdefault.jpg`}
-                          alt={result.videoTitle}
-                        />
+                        <Thumbnail video={result} alt={result.videoTitle} />
                       </a>
                       <div className="search-result-info">
                         <a
                           className="search-result-title"
-                          href={`https://www.youtube.com/watch?v=${result.videoId}`}
+                          href={result.videoUrl || `https://www.youtube.com/watch?v=${result.videoId}`}
                           target="_blank"
                           rel="noopener noreferrer"
                         >
@@ -411,11 +371,15 @@ function App() {
                 </div>
               )
             ) : loading ? (
-              <div className="loading">Loading videos...</div>
+              <div className="loading">Loading {itemLabel}...</div>
             ) : videos.length === 0 && !serverOffline ? (
               <div className="empty-state">
-                <h2>No videos saved yet</h2>
-                <p>Add YouTube videos to start building your collection</p>
+                <h2>No {itemLabel} saved yet</h2>
+                <p>
+                  {isPagesView
+                    ? 'Open any web page, click the BookMarkManager extension icon, then "Save Page".'
+                    : 'Open a YouTube video or web page, click the BookMarkManager extension icon, then "Save".'}
+                </p>
               </div>
             ) : (
               <>
@@ -423,7 +387,7 @@ function App() {
                   {/* List Header */}
                   <div className="video-list-header">
                     <span>Thumbnail</span>
-                    <span>Video Info</span>
+                    <span>{activePage === 'all' ? 'Info' : isPagesView ? 'Page Info' : 'Video Info'}</span>
                     <span>Summary</span>
                     <span>FAQ</span>
                     <span>Transcript</span>
@@ -438,7 +402,7 @@ function App() {
                       onDelete={handleDeleteVideo}
                       onProcess={handleProcess}
                       onDeleteTranscript={handleDeleteTranscript}
-                      onViewTranscript={(videoId, videoTitle) => setTranscriptView({ videoId, videoTitle })}
+                      onViewTranscript={(v) => setTranscriptView({ videoId: v.videoId, videoTitle: v.videoTitle, videoUrl: v.videoUrl, videoType: v.type })}
                       onRefreshSummaryFaq={handleRefreshSummaryFaq}
                       onToggleSummary={handleToggleSummary}
                       onToggleFaq={handleToggleFaq}
@@ -465,7 +429,7 @@ function App() {
                         Page {pagination.page} of {pagination.total_pages}
                       </span>
                       <span className="pagination-total">
-                        ({pagination.total} videos)
+                        ({pagination.total} {itemLabel})
                       </span>
                     </div>
 
@@ -487,17 +451,12 @@ function App() {
 
         {activePage === 'settings' && <SettingsPage />}
 
-        {showAddModal && (
-          <AddVideoModal
-            onClose={() => setShowAddModal(false)}
-            onAdd={handleAddVideo}
-          />
-        )}
-
         {transcriptView && (
           <TranscriptModal
             videoId={transcriptView.videoId}
             videoTitle={transcriptView.videoTitle}
+            videoUrl={transcriptView.videoUrl}
+            videoType={transcriptView.videoType}
             onClose={() => setTranscriptView(null)}
           />
         )}
@@ -506,6 +465,7 @@ function App() {
           <ProcessModal
             videoId={processModal.videoId}
             videoTitle={processModal.videoTitle}
+            video={processModal.video}
             mode={processModal.mode}
             onComplete={handleProcessComplete}
             onClose={() => setProcessModal(null)}

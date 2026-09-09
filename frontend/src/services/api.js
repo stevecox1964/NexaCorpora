@@ -1,8 +1,9 @@
 const API_BASE = '/api';
 
 class ApiService {
-  async getVideos(page = 1, perPage = 20) {
-    const response = await fetch(`${API_BASE}/videos?page=${page}&per_page=${perPage}`);
+  async getVideos(page = 1, perPage = 20, type = null) {
+    const typeParam = type ? `&type=${encodeURIComponent(type)}` : '';
+    const response = await fetch(`${API_BASE}/videos?page=${page}&per_page=${perPage}${typeParam}`);
     if (!response.ok) {
       throw new Error('Failed to fetch videos');
     }

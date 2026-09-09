@@ -1,10 +1,11 @@
 # BookMarkManager
 
-A self-hosted app for saving and managing YouTube video bookmarks with built-in transcription, AI-powered summaries, semantic search, curated AI knowledge bases ("Brains"), and a RAG-powered chat interface. Runs as a single Docker container — Flask serves both the REST API and the React frontend. Includes a Chrome extension for one-click saving from YouTube.
+A self-hosted app for saving and managing YouTube video and web page bookmarks with built-in transcription, AI-powered summaries, semantic search, curated AI knowledge bases ("Brains"), and a RAG-powered chat interface. Runs as a single Docker container — Flask serves both the REST API and the React frontend. Includes a Chrome extension for one-click saving from YouTube or any web page.
 
 ## Features
 
-- **Save YouTube videos** via the Chrome extension or the web UI
+- **Save YouTube videos** via the Chrome extension
+- **Save web pages** — the extension scrapes the page text (up to 300k chars) and takes a tab screenshot as the thumbnail; web pages live alongside videos so search, chat, and Brains work on both
 - **One-click processing** — single "Process" button chains Transcribe → Summary → FAQ automatically in the background; real-time status polling (pending → downloading → transcribing → summarizing → completed)
 - **Transcribe videos** using yt-dlp + AssemblyAI or Gemini Audio, with provider badges and clickable `[M:SS]` timestamps
 - **View transcripts** in-app with an embedded YouTube player and clickable timestamps; save to file
@@ -17,11 +18,10 @@ A self-hosted app for saving and managing YouTube video bookmarks with built-in 
 - **Chat provider toggle** — per-brain chat switches between Local (Gemini + sqlite-vec RAG) and OpenAI (hosted vector store) with a single click
 - **Chat with your videos** — RAG-powered chat drawer with SSE streaming, embedded YouTube player, clickable timestamps, and save conversation to file and database
 - **Delete transcripts** — cascades to embeddings, summary, and FAQ; Process button reappears
-- **Import bookmarks** from Chrome
 - **Configurable settings** — choose transcription provider, pick any Gemini model from a live list fetched from Google, manage embeddings, view all API key status, and customize your profile
 - **Brain badges** — video rows show purple pills for brain membership, clickable to navigate directly to the brain
 - **Save content to file** — download transcripts, summaries, and chat conversations as `.txt` files with datetime-stamped filenames
-- **Paginated list view** with 6 columns: Thumbnail | Info | Summary | FAQ | Transcript | Actions
+- **Paginated list view** with 6 columns: Thumbnail | Info | Summary | FAQ | Transcript | Actions — filterable via sidebar: **All** (default, mixed chronological), **Videos**, **Web pages**
 - **Saved chat history** — clicking Save on any chat persists the full Q&A conversation (with timestamp citations) to the database; retrievable via REST API or MCP
 - **MCP server** — exposes 17 tools (video CRUD, transcription, search, brains, stats, search history, saved chats) so AI models can query and manage your video library via the Model Context Protocol
 
@@ -72,12 +72,12 @@ docker compose logs -f app
 2. Open Chrome and navigate to `chrome://extensions/`
 3. Enable **Developer mode** (top-right toggle)
 4. Click **Load unpacked** and select the `chrome-extension/` folder
-5. Navigate to any YouTube video and click the extension icon
-6. Click **Save to BookMarkManager** to save the video
+5. Navigate to any YouTube video **or any web page** and click the extension icon
+6. Click **Save to BookMarkManager** to save it
 
 **Popup layout:**
 - **Toolbar**: Title + green/red API status dot
-- **Video strip**: Current YouTube video title + channel + Save button
+- **Video strip**: Current YouTube video title + channel (or web page title + site + char count) + Save button
 - **Main area**: Embedded iframe loading `http://localhost:5000` (the full BookMarkManager UI)
 
 ## Architecture
@@ -86,18 +86,18 @@ docker compose logs -f app
 BookMarkManager/
 ├── chrome-extension/                # Chrome Extension (Manifest v3)
 │   ├── manifest.json
-│   ├── background.js                # Scrapes YouTube DOM; POSTs to Flask API
+│   ├── background.js                # Scrapes YouTube DOM or web page text + screenshot; POSTs to Flask API
 │   ├── popup.html / popup.js        # Popup UI and logic
 │   └── icons/
 ├── frontend/                        # React SPA (Vite)
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── VideoCard.jsx        # Video row: 6-column grid with transcript/summary/FAQ actions
-│   │   │   ├── AddVideoModal.jsx    # Manual video add modal
+│   │   │   ├── Thumbnail.jsx        # Shared thumbnail (YouTube img / web screenshot / placeholder)
 │   │   │   ├── TranscriptModal.jsx  # Transcript viewer with embedded YouTube player
 │   │   │   ├── ChatDrawer.jsx       # RAG-powered chat drawer (Gemini + vector search)
 │   │   │   ├── ProcessModal.jsx     # Real-time pipeline progress modal
-│   │   │   ├── Sidebar.jsx          # Left navigation (Videos, Brains, Settings)
+│   │   │   ├── Sidebar.jsx          # Left navigation (All, Videos, Web pages, Brains, Settings)
 │   │   │   ├── SettingsPage.jsx     # Unified settings (profile, model, provider, embeddings, API status)
 │   │   │   └── BrainsPage.jsx       # AI Brains — curated knowledge bases with scoped chat + OpenAI publish
 │   │   ├── services/
@@ -140,6 +140,7 @@ BookMarkManager/
 - **Frontend** is built at Docker image build time and served as static files by Flask
 - **Backend** exposes a REST API under `/api/*` and serves the SPA for all other routes
 - **Processing pipeline** — a single "Process" button chains the full pipeline in a background thread: yt-dlp downloads audio → AssemblyAI or Gemini transcribes with `[M:SS]` timestamps → Gemini generates a short narrative summary + FAQ → transcript chunks are auto-embedded for vector search → video is auto-assigned to matching brains. The frontend polls every 4 seconds for status updates via the ProcessModal.
+- **Web page pipeline** — the extension scrapes `og:title`, site name, and `main`/`article`/body text at save time and screenshots the tab (320x180 JPEG). The server stores it in the same `videos` table with `type='web'` and `video_id = 'web_' + sha1(url)[:16]`. Clicking Process skips download/transcription: the page text is stored as a transcript with `provider='web'`, then summary → FAQ → embed → brain auto-assign.
 - **Stored transcripts** include the video title and YouTube URL as a header line; summaries also embed the video URL for source attribution
 - **Embeddings** use Gemini's `gemini-embedding-001` model (768-dim) to embed transcript chunks into a sqlite-vec virtual table for KNN similarity search
 - **Semantic search** embeds the query via Gemini, runs KNN against the vector store, and returns the best-matching transcript chunks grouped by video
@@ -186,7 +187,7 @@ The MCP (Model Context Protocol) server runs alongside Flask in the same Docker 
 | Tool | Description |
 |------|-------------|
 | `list_videos` | Paginated video list (newest first) |
-| `get_video` | Single video details by YouTube ID |
+| `get_video` | Single bookmark details by video ID |
 | `add_video` | Add a new video bookmark |
 | `delete_video` | Remove a video bookmark |
 | `transcribe_video` | Start transcription (async, returns job ID) |
@@ -228,8 +229,8 @@ cd backend && python mcp_server.py
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/health` | Health check |
-| `GET` | `/api/videos` | List videos (paginated) |
-| `POST` | `/api/videos` | Add a video |
+| `GET` | `/api/videos` | List bookmarks (paginated); `?type=youtube\|web` filters |
+| `POST` | `/api/videos` | Add a video, or a web page with `type: 'web'`, `pageText`, `thumbnailUrl` |
 | `GET` | `/api/videos/<id>` | Get a video |
 | `DELETE` | `/api/videos/<id>` | Delete a video |
 | `POST` | `/api/transcribe/<id>` | Start transcription + summarize pipeline |
@@ -272,8 +273,8 @@ cd backend && python mcp_server.py
 | `POST` | `/api/chats` | Save a chat conversation to the database |
 | `GET` | `/api/chats` | List saved chat conversations |
 | `GET` | `/api/chats/<id>` | Get a single saved chat conversation |
-| `GET` | `/api/bookmarks/chrome` | List Chrome YouTube bookmarks |
-| `POST` | `/api/bookmarks/chrome/import` | Import Chrome bookmarks |
+| `GET` | `/api/bookmarks/chrome` | List Chrome YouTube bookmarks *(legacy, no UI)* |
+| `POST` | `/api/bookmarks/chrome/import` | Import Chrome bookmarks *(legacy, no UI)* |
 
 ## Database Schema
 
@@ -282,14 +283,17 @@ cd backend && python mcp_server.py
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER | Primary key |
-| video_id | TEXT | YouTube video ID (unique) |
-| video_title | TEXT | Video title |
+| video_id | TEXT | YouTube video ID, or `web_` + sha1(url)[:16] for web pages (unique) |
+| video_title | TEXT | Video or page title |
 | channel_id | TEXT | YouTube channel ID |
-| channel_name | TEXT | Channel display name |
+| channel_name | TEXT | Channel display name, or site hostname / og:site_name for web pages |
 | channel_url | TEXT | Channel URL |
-| video_url | TEXT | Full video URL |
+| video_url | TEXT | Full video or page URL |
 | scraped_at | TEXT | ISO8601 timestamp |
 | created_at | TEXT | Record creation timestamp |
+| type | TEXT | `youtube` (default) or `web` |
+| thumbnail_url | TEXT | Web pages only — screenshot data URL or og:image |
+| page_text | TEXT | Web pages only — scraped page text (never returned by list APIs) |
 
 ### transcripts
 
@@ -300,7 +304,7 @@ cd backend && python mcp_server.py
 | content | TEXT | Full transcript text |
 | summary | TEXT | Short 2-4 sentence narrative summary |
 | faq | TEXT | FAQ — 5-10 Q&A pairs |
-| provider | TEXT | Transcription provider (`assemblyai` or `gemini`) |
+| provider | TEXT | Transcription provider (`assemblyai`, `gemini`, or `web` for page text) |
 | indexed_at | TEXT | Indexing timestamp |
 
 ### transcript_chunks

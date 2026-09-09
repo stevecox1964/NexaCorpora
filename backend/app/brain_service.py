@@ -53,7 +53,7 @@ def search_brain(brain_id, query_text, k=8):
 
     rows = db.execute('''
         SELECT tc.video_id, tc.content, tc.chunk_index,
-               v.video_title, v.channel_name,
+               v.video_title, v.channel_name, v.type,
                vc.distance
         FROM vec_chunks vc
         JOIN transcript_chunks tc ON tc.id = vc.chunk_id
@@ -78,8 +78,9 @@ def get_brain_context(brain_id, query_text, k=8):
                 title = r.get('video_title', 'Unknown')
                 video_id = r.get('video_id', '')
                 content = r.get('content', '')
+                label = 'Page' if r.get('type') == 'web' else 'Video'
                 context_parts.append(
-                    f"=== Video: {title} (videoId: {video_id}) ===\n{content}"
+                    f"=== {label}: {title} (videoId: {video_id}) ===\n{content}"
                 )
             context = "\n\n".join(context_parts)
     except Exception as e:
@@ -130,8 +131,9 @@ def chat_with_brain(brain_id, user_message, conversation_history=None):
 
     system_prompt = (
         f"You are a helpful assistant for the knowledge base called \"{brain_name}\". "
-        "This knowledge base is a curated collection of YouTube video transcripts. "
-        "Use the following transcript context to answer the user's question. "
+        "This knowledge base is a curated collection of YouTube video transcripts and saved web pages. "
+        "Sources whose header starts with 'Page:' are web pages with no timestamps; cite them by title only. "
+        "Use the following context to answer the user's question. "
         "If the context doesn't contain relevant information, say so honestly. "
         "Always mention which video(s) your answer is based on when applicable.\n\n"
         "IMPORTANT: When citing specific timestamps from a video, use this exact format: "

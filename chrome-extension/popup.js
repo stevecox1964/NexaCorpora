@@ -9,6 +9,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let currentVideoData = null;
 
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   function displayStatus(message, isError = false) {
     statusMessageDiv.textContent = message;
     statusMessageDiv.style.color = isError ? '#f88' : '#6f6';
@@ -43,18 +48,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const response = await chrome.runtime.sendMessage({ action: "getCurrentVideoInfo" });
       if (response && response.success && response.data) {
         currentVideoData = response.data;
+        const isWeb = currentVideoData.type === 'web';
+        const detail = isWeb
+          ? `Web page &nbsp;|&nbsp; ${(currentVideoData.pageTextLength || 0).toLocaleString()} chars` +
+            (currentVideoData.pageTextTruncated ? ' (truncated)' : '')
+          : `ID: ${currentVideoData.videoId}`;
         currentVideoInfoDiv.innerHTML = `
-          <h3>${currentVideoData.videoTitle}</h3>
-          <p>${currentVideoData.channelName || 'N/A'} &nbsp;|&nbsp; ID: ${currentVideoData.videoId}</p>
+          <h3>${escapeHtml(currentVideoData.videoTitle)}</h3>
+          <p>${escapeHtml(currentVideoData.channelName || 'N/A')} &nbsp;|&nbsp; ${detail}</p>
         `;
-        if (currentVideoData.channelId && currentVideoData.channelId !== "N/A_ChannelID_Unavailable") {
+        saveCurrentVideoButton.textContent = isWeb ? "Save Page to BookMarkManager" : "Save to BookMarkManager";
+        if (isWeb || (currentVideoData.channelId && currentVideoData.channelId !== "N/A_ChannelID_Unavailable")) {
           saveCurrentVideoButton.classList.remove('hidden');
         } else {
           currentVideoInfoDiv.innerHTML += `<p style="color:#f88;">Cannot save: Channel ID unavailable.</p>`;
           saveCurrentVideoButton.classList.add('hidden');
         }
       } else {
-        currentVideoInfoDiv.textContent = "No YouTube video selected. Please select one.";
+        currentVideoInfoDiv.textContent = (response && response.error) || "No page selected. Open a web page or YouTube video first.";
         saveCurrentVideoButton.classList.add('hidden');
       }
     } catch (error) {
@@ -82,7 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
         displayStatus("Error communicating with background script.", true);
       } finally {
         saveCurrentVideoButton.disabled = false;
-        saveCurrentVideoButton.textContent = "Save to BookMarkManager";
+        saveCurrentVideoButton.textContent = currentVideoData.type === 'web' ? "Save Page to BookMarkManager" : "Save to BookMarkManager";
       }
     }
   });

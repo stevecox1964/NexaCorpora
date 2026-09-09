@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { apiService } from '../services/api';
+import Thumbnail from './Thumbnail';
 
 const STEPS = {
   process: [
@@ -8,6 +9,10 @@ const STEPS = {
     { key: 'summarizing', label: 'Generating Summary & FAQ' },
   ],
   refresh: [
+    { key: 'summarizing', label: 'Generating Summary & FAQ' },
+  ],
+  // Web pages: text was saved by the extension, so there is nothing to download or transcribe
+  web: [
     { key: 'summarizing', label: 'Generating Summary & FAQ' },
   ],
 };
@@ -22,14 +27,16 @@ const STATUS_TO_STEP = {
   failed: -1,
 };
 
-function ProcessModal({ videoId, videoTitle, mode, onComplete, onClose }) {
+function ProcessModal({ videoId, videoTitle, video, mode, onComplete, onClose }) {
   const [currentStatus, setCurrentStatus] = useState(mode === 'refresh' ? 'summarizing' : 'pending');
   const [error, setError] = useState(null);
   const [jobId, setJobId] = useState(null);
   const pollRef = useRef(null);
   const startedRef = useRef(false);
 
-  const steps = STEPS[mode] || STEPS.process;
+  const isWeb = video?.type === 'web';
+  const stepsKey = mode === 'process' && isWeb ? 'web' : mode;
+  const steps = STEPS[stepsKey] || STEPS.process;
 
   const cleanup = useCallback(() => {
     if (pollRef.current) {
@@ -122,19 +129,19 @@ function ProcessModal({ videoId, videoTitle, mode, onComplete, onClose }) {
   };
 
   const getActiveStepIndex = () => {
-    if (mode === 'refresh') return 0;
+    if (mode === 'refresh' || stepsKey === 'web') return 0;
     const mapped = STATUS_TO_STEP[currentStatus];
     return mapped !== undefined ? mapped : 0;
   };
 
-  const thumbnailUrl = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+  const thumbVideo = video || { videoId, type: 'youtube' };
 
   return (
     <div className="modal-overlay" onClick={(e) => { if (isDone && e.target === e.currentTarget) onClose(); }}>
       <div className="modal process-modal">
         {/* Header */}
         <div className="process-modal-header">
-          <h2>{mode === 'refresh' ? 'Refreshing Summary & FAQ' : 'Processing Video'}</h2>
+          <h2>{mode === 'refresh' ? 'Refreshing Summary & FAQ' : isWeb ? 'Processing Web Page' : 'Processing Video'}</h2>
           {isDone && (
             <button className="btn btn-sm btn-icon process-modal-close" onClick={onClose} title="Close">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -147,7 +154,7 @@ function ProcessModal({ videoId, videoTitle, mode, onComplete, onClose }) {
 
         {/* Video info */}
         <div className="process-modal-video">
-          <img src={thumbnailUrl} alt={videoTitle} className="process-modal-thumb" />
+          <Thumbnail video={thumbVideo} alt={videoTitle} className="process-modal-thumb" />
           <span className="process-modal-title">{videoTitle}</span>
         </div>
 

@@ -1,4 +1,7 @@
 import React from 'react';
+import Thumbnail from './Thumbnail';
+
+const PROVIDER_LABELS = { assemblyai: 'AAI', gemini: 'Gemini', web: 'Web' };
 
 function VideoCard({
   video,
@@ -13,7 +16,7 @@ function VideoCard({
   summaryState,
   faqState,
 }) {
-  const thumbnailUrl = `https://img.youtube.com/vi/${video.videoId}/mqdefault.jpg`;
+  const isWeb = video.type === 'web';
 
   const formatDate = (dateString) => {
     if (!dateString) return 'Unknown date';
@@ -42,19 +45,14 @@ function VideoCard({
         {/* Thumbnail */}
         <div className="video-row-thumbnail">
           <a href={video.videoUrl} target="_blank" rel="noopener noreferrer">
-            <img
-              src={thumbnailUrl}
-              alt={video.videoTitle}
-              onError={(e) => {
-                e.target.src = 'https://via.placeholder.com/160x90?text=No+Thumbnail';
-              }}
-            />
+            <Thumbnail video={video} alt={video.videoTitle} />
           </a>
         </div>
 
         {/* Title / Channel / Date */}
         <div className="video-row-info">
           <h3 className="video-row-title">
+            {isWeb && <span className="type-badge type-web" title="Web page bookmark">WEB</span>}
             <a href={video.videoUrl} target="_blank" rel="noopener noreferrer">
               {video.videoTitle}
             </a>
@@ -131,8 +129,8 @@ function VideoCard({
             <div className="transcript-actions-group">
               <button
                 className="status-indicator available clickable"
-                onClick={() => onViewTranscript && onViewTranscript(video.videoId, video.videoTitle)}
-                title="View Transcript"
+                onClick={() => onViewTranscript && onViewTranscript(video)}
+                title={isWeb ? 'View Page Text' : 'View Transcript'}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -141,7 +139,7 @@ function VideoCard({
               </button>
               {video.transcriptProvider && (
                 <span className={`provider-badge provider-${video.transcriptProvider}`}>
-                  {video.transcriptProvider === 'assemblyai' ? 'AAI' : 'Gemini'}
+                  {PROVIDER_LABELS[video.transcriptProvider] || video.transcriptProvider}
                 </span>
               )}
               {onDeleteTranscript && (
@@ -173,7 +171,7 @@ function VideoCard({
             <button
               className="btn btn-sm btn-primary"
               onClick={() => onProcess(video.videoId)}
-              title="Transcribe + Summarize + FAQ"
+              title={isWeb ? 'Summarize + FAQ + Embed' : 'Transcribe + Summarize + FAQ'}
             >
               Process
             </button>

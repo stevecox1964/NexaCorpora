@@ -8,6 +8,6 @@ google-genai
 openai
 sqlite-vec
 numpy
-mcp[cli]
+mcp[cli]<2
 uvicorn
 starlette

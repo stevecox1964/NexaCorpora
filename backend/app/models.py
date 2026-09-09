@@ -29,9 +29,12 @@ class Setting:
 
 class Video:
     @staticmethod
-    def get_all(limit=20, offset=0):
+    def get_all(limit=20, offset=0, video_type=None):
+        """video_type: None (all), 'youtube', or 'web'."""
         db = get_db()
-        cursor = db.execute('''
+        type_filter = "WHERE COALESCE(v.type, 'youtube') = ?" if video_type else ''
+        params = ([video_type] if video_type else []) + [limit, offset]
+        cursor = db.execute(f'''
             SELECT v.*,
                    (t.id IS NOT NULL) AS has_transcript,
                    (t.summary IS NOT NULL AND t.summary != '') AS has_summary,
@@ -43,16 +46,22 @@ class Video:
             LEFT JOIN jobs j ON v.video_id = j.video_id
                 AND j.job_type = 'transcribe'
                 AND j.status NOT IN ('completed', 'failed')
+            {type_filter}
             ORDER BY v.scraped_at DESC, v.created_at DESC
             LIMIT ? OFFSET ?
-        ''', (limit, offset))
+        ''', params)
         rows = cursor.fetchall()
         return [Video.row_to_dict(row) for row in rows]
 
     @staticmethod
-    def count_all():
+    def count_all(video_type=None):
         db = get_db()
-        cursor = db.execute('SELECT COUNT(*) as count FROM videos')
+        if video_type:
+            cursor = db.execute(
+                "SELECT COUNT(*) as count FROM videos WHERE COALESCE(type, 'youtube') = ?", (video_type,)
+            )
+        else:
+            cursor = db.execute('SELECT COUNT(*) as count FROM videos')
         row = cursor.fetchone()
         return row['count'] if row else 0
 
@@ -72,8 +81,9 @@ class Video:
             db.execute('''
                 INSERT INTO videos (
                     channel_id, channel_id_source, channel_name, channel_url,
-                    scraped_at, video_id, video_title, video_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    scraped_at, video_id, video_title, video_url,
+                    type, thumbnail_url, page_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 data.get('channelId'),
                 data.get('channelIdSource'),
@@ -82,13 +92,23 @@ class Video:
                 data.get('scrapedAt', datetime.utcnow().isoformat()),
                 data['videoId'],
                 data['videoTitle'],
-                data.get('videoUrl')
+                data.get('videoUrl'),
+                data.get('type', 'youtube'),
+                data.get('thumbnailUrl'),
+                data.get('pageText')
             ))
             db.commit()
             return Video.get_by_video_id(data['videoId'])
         except Exception as e:
             db.rollback()
             raise e
+
+    @staticmethod
+    def get_page_text(video_id):
+        """Raw text scraped from a web page bookmark (None for YouTube videos)."""
+        db = get_db()
+        row = db.execute('SELECT page_text FROM videos WHERE video_id = ?', (video_id,)).fetchone()
+        return row['page_text'] if row else None
 
     @staticmethod
     def delete(video_id):
@@ -115,6 +135,12 @@ class Video:
             'videoUrl': row['video_url'],
             'createdAt': row['created_at']
         }
+        keys = row.keys()
+        # page_text is intentionally not returned (can be very large); use get_page_text()
+        result['type'] = (row['type'] if 'type' in keys else None) or 'youtube'
+        result['thumbnailUrl'] = row['thumbnail_url'] if 'thumbnail_url' in keys else None
+        if 'page_text' in keys:
+            result['hasPageText'] = bool(row['page_text'])
         if 'has_transcript' in row.keys():
             result['hasTranscript'] = bool(row['has_transcript'])
         if 'has_summary' in row.keys():
@@ -349,13 +375,19 @@ class Brain:
         return [Video.row_to_dict(row) for row in rows]
 
     @staticmethod
-    def get_thumbnail_video_ids(brain_id, limit=4):
+    def get_thumbnail_videos(brain_id, limit=4):
+        """Minimal video dicts for the brain card grid: YouTube ids or web page screenshots."""
         db = get_db()
-        rows = db.execute(
-            'SELECT video_id FROM brain_videos WHERE brain_id = ? LIMIT ?',
-            (brain_id, limit)
-        ).fetchall()
-        return [row['video_id'] for row in rows]
+        rows = db.execute('''
+            SELECT bv.video_id, v.type, v.thumbnail_url FROM brain_videos bv
+            JOIN videos v ON v.video_id = bv.video_id
+            WHERE bv.brain_id = ?
+            LIMIT ?
+        ''', (brain_id, limit)).fetchall()
+        return [
+            {'videoId': r['video_id'], 'type': r['type'] or 'youtube', 'thumbnailUrl': r['thumbnail_url']}
+            for r in rows
+        ]
 
     @staticmethod
     def get_brains_for_video(video_id):

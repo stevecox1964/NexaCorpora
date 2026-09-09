@@ -114,28 +114,39 @@ def run_transcription_job(app, job_id, video_id, api_key, provider='assemblyai')
                 Job.update_status(job_id, 'failed', 'Video not found or missing URL')
                 return
 
-            # Step 1: Download audio
-            Job.update_status(job_id, 'downloading')
-            logger.info(f'Downloading audio for {video_id}')
-            audio_path = download_audio(video['videoUrl'], tmp_dir)
-
-            # Step 2: Transcribe with selected provider
-            Job.update_status(job_id, 'transcribing')
-            logger.info(f'Transcribing {video_id} with {provider}')
-            if provider == 'gemini':
-                text = transcribe_audio_gemini(audio_path, api_key)
+            if video.get('type') == 'web':
+                # Web page: text was scraped by the extension at save time.
+                # No download, no transcription — go straight to summarizing.
+                text = Video.get_page_text(video_id)
+                if not text:
+                    Job.update_status(job_id, 'failed', 'Web page has no saved text')
+                    return
+                text = f"Page: {video.get('videoTitle', video_id)}\n{video['videoUrl']}\n\n{text}"
+                Transcript.create(video_id, text, provider='web')
+                logger.info(f'Stored page text as transcript for {video_id}')
             else:
-                text = transcribe_audio(audio_path, api_key)
+                # Step 1: Download audio
+                Job.update_status(job_id, 'downloading')
+                logger.info(f'Downloading audio for {video_id}')
+                audio_path = download_audio(video['videoUrl'], tmp_dir)
 
-            if not text:
-                Job.update_status(job_id, 'failed', 'Transcription returned empty text')
-                return
+                # Step 2: Transcribe with selected provider
+                Job.update_status(job_id, 'transcribing')
+                logger.info(f'Transcribing {video_id} with {provider}')
+                if provider == 'gemini':
+                    text = transcribe_audio_gemini(audio_path, api_key)
+                else:
+                    text = transcribe_audio(audio_path, api_key)
 
-            # Step 3: Store transcript (prepend video URL for reference)
-            video_url = video.get('videoUrl', f"https://www.youtube.com/watch?v={video_id}")
-            text = f"Video: {video.get('videoTitle', video_id)}\n{video_url}\n\n{text}"
-            Transcript.create(video_id, text, provider=provider)
-            logger.info(f'Transcription complete for {video_id}')
+                if not text:
+                    Job.update_status(job_id, 'failed', 'Transcription returned empty text')
+                    return
+
+                # Step 3: Store transcript (prepend video URL for reference)
+                video_url = video.get('videoUrl', f"https://www.youtube.com/watch?v={video_id}")
+                text = f"Video: {video.get('videoTitle', video_id)}\n{video_url}\n\n{text}"
+                Transcript.create(video_id, text, provider=provider)
+                logger.info(f'Transcription complete for {video_id}')
 
             # Step 4: Generate summary + FAQ
             Job.update_status(job_id, 'summarizing')
@@ -205,10 +216,20 @@ def start_transcription(app, video_id, provider=None, force=False):
         else:
             return None, 'Transcript already exists', 409
 
-    if provider is None:
+    if video.get('type') == 'web':
+        # Web pages skip transcription; only Gemini (summary/FAQ/embeddings) is needed
+        if not video.get('hasPageText'):
+            return None, 'Web page has no saved text to process', 400
+        provider = 'web'
+        api_key = os.environ.get('GOOGLE_API_KEY')
+        if not api_key:
+            return None, 'GOOGLE_API_KEY not configured', 500
+    elif provider is None:
         provider = Setting.get('transcription_provider') or 'assemblyai'
 
-    if provider == 'gemini':
+    if provider == 'web':
+        pass  # api_key already set above
+    elif provider == 'gemini':
         api_key = os.environ.get('GOOGLE_API_KEY')
         if not api_key:
             return None, 'GOOGLE_API_KEY not configured', 500

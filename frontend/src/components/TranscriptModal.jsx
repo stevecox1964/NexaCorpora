@@ -55,7 +55,11 @@ function renderTranscriptContent(content, videoId, onTimestampClick) {
   return parts;
 }
 
-function TranscriptModal({ videoId, videoTitle, onClose }) {
+const PROVIDER_LABELS = { assemblyai: 'AssemblyAI', gemini: 'Gemini', web: 'Web page' };
+
+function TranscriptModal({ videoId, videoTitle, videoUrl, videoType, onClose }) {
+  const isWeb = videoType === 'web';
+  const sourceUrl = videoUrl || `https://www.youtube.com/watch?v=${videoId}`;
   const [transcript, setTranscript] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -174,10 +178,10 @@ function TranscriptModal({ videoId, videoTitle, onClose }) {
       <div className="modal transcript-modal" onClick={(e) => e.stopPropagation()}>
         <div className="transcript-modal-header">
           <h2>
-            Transcript
+            {isWeb ? 'Page Text' : 'Transcript'}
             {transcript?.provider && (
               <span className={`provider-badge provider-${transcript.provider}`} style={{ marginLeft: 8, verticalAlign: 'middle' }}>
-                {transcript.provider === 'assemblyai' ? 'AssemblyAI' : 'Gemini'}
+                {PROVIDER_LABELS[transcript.provider] || transcript.provider}
               </span>
             )}
           </h2>
@@ -204,12 +208,12 @@ function TranscriptModal({ videoId, videoTitle, onClose }) {
               </button>
               <button
                 className="btn btn-sm btn-secondary"
-                onClick={() => saveToFile(`${videoTitle}\nhttps://www.youtube.com/watch?v=${videoId}\n\n${transcript.content}`, 'transcript')}
+                onClick={() => saveToFile(`${videoTitle}\n${sourceUrl}\n\n${transcript.content}`, isWeb ? 'page' : 'transcript')}
                 title="Save transcript to file"
               >
                 Save to File
               </button>
-              {hasTimestamps && !playerVisible && (
+              {!isWeb && hasTimestamps && !playerVisible && (
                 <button
                   className="btn btn-sm btn-secondary"
                   onClick={() => createOrSeekPlayer(0)}

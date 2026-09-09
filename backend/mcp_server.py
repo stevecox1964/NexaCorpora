@@ -59,7 +59,7 @@ mcp = FastMCP(
 
 @mcp.tool()
 def list_videos(page: int = 1, per_page: int = 20) -> str:
-    """List saved YouTube videos (newest first).
+    """List saved bookmarks (newest first). type is 'youtube' or 'web'.
 
     Args:
         page: Page number (default 1).
@@ -72,7 +72,7 @@ def list_videos(page: int = 1, per_page: int = 20) -> str:
         total = db.execute('SELECT COUNT(*) AS c FROM videos').fetchone()['c']
         rows = db.execute(
             '''
-            SELECT v.video_id, v.video_title, v.channel_name, v.video_url, v.scraped_at,
+            SELECT v.video_id, v.video_title, v.channel_name, v.video_url, v.scraped_at, v.type,
                    (t.id IS NOT NULL) AS has_transcript,
                    (t.summary IS NOT NULL AND t.summary != '') AS has_summary,
                    (t.faq IS NOT NULL AND t.faq != '') AS has_faq,
@@ -90,6 +90,7 @@ def list_videos(page: int = 1, per_page: int = 20) -> str:
                 'videoTitle': r['video_title'],
                 'channelName': r['channel_name'],
                 'videoUrl': r['video_url'],
+                'type': r['type'] or 'youtube',
                 'scrapedAt': r['scraped_at'],
                 'hasTranscript': bool(r['has_transcript']),
                 'hasSummary': bool(r['has_summary']),
@@ -140,6 +141,7 @@ def get_video(video_id: str) -> str:
             'channelId': row['channel_id'],
             'channelUrl': row['channel_url'],
             'videoUrl': row['video_url'],
+            'type': row['type'] or 'youtube',
             'scrapedAt': row['scraped_at'],
             'hasTranscript': bool(row['has_transcript']),
             'hasSummary': bool(row['has_summary']),

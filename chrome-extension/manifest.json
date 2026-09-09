@@ -1,23 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "YouTube Summary Manager",
+  "name": "BookMarkManager",
   "version": "1.2",
-  "description": "Saves YouTube video info directly to the BookMarkManager Docker container.",
+  "description": "Saves YouTube videos and web pages directly to the BookMarkManager Docker container.",
   "permissions": [
     "activeTab",
     "scripting",
     "tabs"
   ],
   "host_permissions": [
-    "*://*.youtube.com/*",
-    "http://localhost:5000/*"
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "action": {
-    "default_title": "Open YouTube Summary Manager"
+    "default_title": "Open BookMarkManager"
   },
   "commands": {
     "open-manager": {
@@ -25,7 +24,7 @@
         "default": "Ctrl+Shift+Y",
         "mac": "Command+Shift+Y"
       },
-      "description": "Open YouTube Summary Manager"
+      "description": "Open BookMarkManager"
     }
   },
   "icons": {

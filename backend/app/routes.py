@@ -1,5 +1,6 @@
 import os
 import json
+import hashlib
 from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
 from .models import Video, Job, Transcript, Setting, Brain, SearchQuery, SavedChat
 from .bookmarks import get_chrome_youtube_bookmarks
@@ -22,6 +23,9 @@ def get_videos():
     """Get list of videos (latest to oldest) with pagination."""
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
+    video_type = request.args.get('type')  # None (all) | 'youtube' | 'web'
+    if video_type not in (None, 'youtube', 'web'):
+        return jsonify({'success': False, 'error': "type must be 'youtube' or 'web'"}), 400
     
     # Clamp values
     page = max(page, 1)
@@ -31,8 +35,8 @@ def get_videos():
     offset = (page - 1) * per_page
     
     # Get total count and videos
-    total = Video.count_all()
-    videos = Video.get_all(limit=per_page, offset=offset)
+    total = Video.count_all(video_type)
+    videos = Video.get_all(limit=per_page, offset=offset, video_type=video_type)
 
     # Attach brain membership to each video
     for video in videos:
@@ -55,6 +59,11 @@ def get_videos():
     })
 
 
+def web_page_id(url):
+    """Stable ID for a web page bookmark, derived from its URL."""
+    return 'web_' + hashlib.sha1(url.strip().encode('utf-8')).hexdigest()[:16]
+
+
 @bp.route('/videos', methods=['POST'])
 def add_video():
     """Add a new video bookmark."""
@@ -62,6 +71,18 @@ def add_video():
 
     if not data:
         return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+    video_type = data.get('type', 'youtube')
+    if video_type not in ('youtube', 'web'):
+        return jsonify({'success': False, 'error': "type must be 'youtube' or 'web'"}), 400
+
+    if video_type == 'web':
+        # Web page: ID is derived from the URL; text is scraped by the extension
+        if not data.get('videoUrl'):
+            return jsonify({'success': False, 'error': 'Missing required field: videoUrl'}), 400
+        if not (data.get('pageText') or '').strip():
+            return jsonify({'success': False, 'error': 'Page has no readable text (pageText is empty)'}), 400
+        data['videoId'] = web_page_id(data['videoUrl'])
 
     required_fields = ['videoId', 'videoTitle']
     for field in required_fields:
@@ -515,6 +536,9 @@ def semantic_search():
                     'videoId': r['video_id'],
                     'videoTitle': r['video_title'],
                     'channelName': r['channel_name'],
+                    'videoUrl': r['video_url'],
+                    'type': r['type'] or 'youtube',
+                    'thumbnailUrl': r['thumbnail_url'],
                     'matchingChunk': r['content'],
                     'distance': r['distance'],
                 }
@@ -637,7 +661,7 @@ def get_brains():
     """Get all brains with video counts and thumbnail video IDs."""
     brains = Brain.get_all()
     for brain in brains:
-        brain['thumbnailVideoIds'] = Brain.get_thumbnail_video_ids(brain['id'])
+        brain['thumbnailVideos'] = Brain.get_thumbnail_videos(brain['id'])
     return jsonify({'success': True, 'brains': brains})
 
 
@@ -663,7 +687,7 @@ def get_brain(brain_id):
         return jsonify({'success': False, 'error': 'Brain not found'}), 404
 
     brain['videos'] = Brain.get_videos(brain_id)
-    brain['thumbnailVideoIds'] = Brain.get_thumbnail_video_ids(brain_id)
+    brain['thumbnailVideos'] = Brain.get_thumbnail_videos(brain_id)
     return jsonify({'success': True, 'brain': brain})
 
 

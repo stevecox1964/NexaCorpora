@@ -96,6 +96,17 @@ def init_db(app):
         except Exception:
             pass  # Column already exists
 
+        # Web page bookmarks share the videos table. type = 'youtube' | 'web'
+        for column_sql in (
+            "ALTER TABLE videos ADD COLUMN type TEXT DEFAULT 'youtube'",
+            "ALTER TABLE videos ADD COLUMN thumbnail_url TEXT",
+            "ALTER TABLE videos ADD COLUMN page_text TEXT",
+        ):
+            try:
+                db.execute(column_sql)
+            except Exception:
+                pass  # Column already exists
+
         # Transcript chunks for embedding-based vector search
         db.execute('''
             CREATE TABLE IF NOT EXISTS transcript_chunks (

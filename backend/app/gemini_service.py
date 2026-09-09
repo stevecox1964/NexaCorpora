@@ -24,6 +24,13 @@ def _get_model_name():
     return model or os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
 
 
+def _source_info(video, video_id):
+    """(url, human label) for the prompt — web pages have their own URL and no timestamps."""
+    if video and video.get('type') == 'web':
+        return video.get('videoUrl') or '', 'web page'
+    return f"https://www.youtube.com/watch?v={video_id}", 'YouTube video transcript'
+
+
 def generate_summary(video_id):
     """Generate a short 2-4 sentence narrative summary for a video's transcript."""
     transcript = Transcript.get_by_video_id(video_id)
@@ -34,16 +41,16 @@ def generate_summary(video_id):
 
     video = Video.get_by_video_id(video_id)
     video_title = video['videoTitle'] if video else 'Unknown'
-    video_url = f"https://www.youtube.com/watch?v={video_id}"
+    video_url, source_kind = _source_info(video, video_id)
 
     client = _get_client()
 
     prompt = (
-        "Summarize the following YouTube video transcript in 2-4 concise sentences. "
+        f"Summarize the following {source_kind} in 2-4 concise sentences. "
         "Cover the main topic, key points, and conclusion. Be brief and direct.\n\n"
-        f"Video Title: {video_title}\n"
-        f"Video URL: {video_url}\n\n"
-        f"Transcript:\n{transcript['content']}"
+        f"Title: {video_title}\n"
+        f"URL: {video_url}\n\n"
+        f"Content:\n{transcript['content']}"
     )
 
     response = client.models.generate_content(model=_get_model_name(), contents=prompt)
@@ -61,14 +68,14 @@ def generate_faq(video_id):
 
     video = Video.get_by_video_id(video_id)
     video_title = video['videoTitle'] if video else 'Unknown'
-    video_url = f"https://www.youtube.com/watch?v={video_id}"
+    video_url, source_kind = _source_info(video, video_id)
 
     client = _get_client()
 
     prompt = (
-        "Extract frequently asked questions and their answers from the following YouTube video transcript. "
-        "Identify the key questions that a viewer might have after watching this video, and provide clear, "
-        "concise answers based on the transcript content.\n\n"
+        f"Extract frequently asked questions and their answers from the following {source_kind}. "
+        "Identify the key questions that a reader might have after reading this, and provide clear, "
+        "concise answers based on the content.\n\n"
         "Return the response in this format:\n\n"
         f"Source: {video_title}\n"
         f"{video_url}\n\n"
@@ -106,7 +113,8 @@ def chat_with_knowledge_base(user_message, conversation_history=None):
                 title = r.get('video_title', 'Unknown')
                 video_id = r.get('video_id', '')
                 content = r.get('content', '')
-                context_parts.append(f"=== Video: {title} (videoId: {video_id}) ===\n{content}")
+                label = 'Page' if r.get('type') == 'web' else 'Video'
+                context_parts.append(f"=== {label}: {title} (videoId: {video_id}) ===\n{content}")
             context = "\n\n".join(context_parts)
     except Exception:
         pass
@@ -129,14 +137,16 @@ def chat_with_knowledge_base(user_message, conversation_history=None):
 
     system_prompt = (
         "You are a helpful assistant that answers questions based on a knowledge base "
-        "of YouTube video transcripts. Use the following transcript context to answer "
+        "of YouTube video transcripts and saved web pages. Use the following context to answer "
         "the user's question. If the context doesn't contain relevant information, say so "
         "honestly. Always mention which video(s) your answer is based on when applicable.\n\n"
         "IMPORTANT: When citing specific timestamps from a video, use this exact format: "
         "[M:SS](videoId) — for example [7:11](dQw4w9WgXcQ). This allows the user to click "
         "the timestamp to jump to that moment in the video. Always use the videoId provided "
         "in the context header for each video. For timestamp ranges, format each timestamp "
-        "separately, e.g. [7:11](abc123) to [8:07](abc123).\n\n"
+        "separately, e.g. [7:11](abc123) to [8:07](abc123). "
+        "Sources whose header starts with 'Page:' are web pages, not videos — they have "
+        "no timestamps, so cite them by title only.\n\n"
         f"Knowledge Base Context:\n{context}"
     )
 

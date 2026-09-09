@@ -1,9 +1,9 @@
 # BookMarkManager Project
 
 ## Overview
-A single page application for managing YouTube video bookmarks with a Python Flask backend. The app runs as a single Docker container: Flask serves both the API and the built React frontend.
+A single page application for managing YouTube video and web page bookmarks with a Python Flask backend. The app runs as a single Docker container: Flask serves both the API and the built React frontend.
 
-The repo also includes a Chrome extension (`chrome-extension/`) that scrapes YouTube video metadata and saves it directly to the Docker API — no local Downloads or Chrome storage used.
+The repo also includes a Chrome extension (`chrome-extension/`) that scrapes YouTube video metadata **or any web page's text** and saves it directly to the Docker API — no local Downloads or Chrome storage used.
 
 ## Architecture
 
@@ -17,11 +17,10 @@ BookMarkManager/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── VideoCard.jsx        # Video row: thumbnail, info, transcript/summary status, actions
-│   │   │   ├── AddVideoModal.jsx    # Modal for manually adding videos
 │   │   │   ├── TranscriptModal.jsx  # Modal with embedded YouTube player + clickable timestamps
 │   │   │   ├── ChatDrawer.jsx       # Bottom drawer chat component (Gemini-powered, SSE streaming)
 │   │   │   ├── ProcessModal.jsx     # Real-time progress modal for Process/Refresh pipeline
-│   │   │   ├── Sidebar.jsx          # Left navigation sidebar (Videos, Brains, Settings)
+│   │   │   ├── Sidebar.jsx          # Left navigation sidebar (All, Videos, Web pages, Brains, Settings)
 │   │   │   ├── SettingsPage.jsx     # Settings: profile, model config, transcription provider, embeddings
 │   │   │   └── BrainsPage.jsx       # AI Brains — curated knowledge bases with scoped chat
 │   │   ├── services/api.js          # All fetch calls + SSE streaming
@@ -50,6 +49,10 @@ BookMarkManager/
 
 **Save video**: Chrome extension → `POST /api/videos` → SQLite → auto-assign to brain by channel
 
+**Save web page**: Extension detects a non-YouTube tab → screenshots it (320x180 JPEG data URL) → injects `scrapeWebPageInfo()` (og:title, `main`/`article`/body innerText, max 300k chars) → `POST /api/videos` with `type: 'web'`, `pageText`, `thumbnailUrl` → server derives `video_id = 'web_' + sha1(url)[:16]`. Channel = site hostname / og:site_name. Web pages live in the same `videos` table so brains, search, and chat work unchanged.
+
+**Process web page**: Same "Process" button → `POST /api/transcribe/<id>` → job skips download/transcription, copies `page_text` into `transcripts` with `provider='web'` → summary → FAQ → embed → auto-assign brains. Job goes `pending → summarizing → completed`.
+
 **Process pipeline**: "Process" button → `POST /api/transcribe/<id>` → background thread: yt-dlp download → AssemblyAI/Gemini transcription → summary → FAQ → auto-embed → auto-assign brains. Frontend polls `GET /api/jobs/<id>` every 4s via ProcessModal.
 
 **Chat (RAG)**: `POST /api/chat` → embed query → KNN over `vec_chunks` (sqlite-vec) → top 8 chunks → Gemini SSE stream. Falls back to summaries if no embeddings.
@@ -61,7 +64,7 @@ BookMarkManager/
 ## API Endpoints Summary
 
 See `backend/app/routes.py` for full details. Key groups:
-- Videos: `GET/POST /api/videos`, `GET/DELETE /api/videos/<id>`
+- Videos: `GET/POST /api/videos` (GET accepts `?type=youtube|web`), `GET/DELETE /api/videos/<id>`
 - Transcripts: `GET/DELETE /api/transcripts/<id>`, `POST /api/transcribe/<id>`
 - Summary/FAQ: `GET/POST/DELETE /api/summaries/<id>`, `GET /api/faq/<id>`, `POST /api/refresh/<id>`
 - Chat: `POST /api/chat` (SSE), `POST /api/brains/<id>/chat` (SSE)
@@ -74,8 +77,8 @@ See `backend/app/routes.py` for full details. Key groups:
 
 ## Database Tables
 
-- **videos**: id, video_id (unique), video_title, channel_id, channel_name, channel_url, video_url, scraped_at, created_at
-- **transcripts**: id, video_id, content, summary, faq, provider (assemblyai|gemini), indexed_at
+- **videos**: id, video_id (unique), video_title, channel_id, channel_name, channel_url, video_url, scraped_at, created_at, type (`youtube`|`web`), thumbnail_url, page_text (web only; never returned by list APIs — use `Video.get_page_text()`)
+- **transcripts**: id, video_id, content, summary, faq, provider (assemblyai|gemini|web), indexed_at
 - **jobs**: id (UUID), video_id, job_type, status (pending→downloading→transcribing→summarizing→completed|failed), error_message, created_at, completed_at
 - **settings**: key, value, updated_at — defaults: `transcription_provider=assemblyai`, `gemini_model=gemini-2.5-flash`, `profile_name`, `profile_subtitle`
 - **transcript_chunks**: id, video_id, chunk_index, content (~2000 chars)
@@ -135,7 +138,8 @@ GEMINI_MODEL=gemini-2.5-flash  # Optional (options: gemini-2.5-flash, gemini-3-f
 - Mobile ≤900px: grid collapses to `1fr`, sidebar slides in/out with hamburger toggle.
 - Dark theme: `#0f0f0f` bg, `#1a1a1a` cards, `#3ea6ff` accent blue. All styles in `index.css`.
 - 6-column video row: Thumbnail (160x90) | Info | Summary | FAQ | Transcript | Actions
-- No router library — `activePage` state switches between `'videos'`, `'brains'`, `'settings'`.
+- No router library — `activePage` state switches between `'all'` (default on startup), `'videos'`, `'pages'` (web bookmarks), `'brains'`, `'settings'`. `'all'`, `'videos'` and `'pages'` share the same list UI in App.jsx; `'all'` is unfiltered (chronological), the others use `GET /api/videos?type=`.
+- No manual "Add Video" UI — all bookmarks come from the Chrome extension.
 
 ### Transcription
 - No Celery/Redis — Python `threading.Thread` (sufficient for single-user).
@@ -157,7 +161,10 @@ GEMINI_MODEL=gemini-2.5-flash  # Optional (options: gemini-2.5-flash, gemini-3-f
 - KNN post-filter: sqlite-vec can't filter during KNN, so filter by brain's video IDs after.
 
 ### Misc
-- YouTube thumbnail: `https://img.youtube.com/vi/{videoId}/mqdefault.jpg` (320x180)
+- Brain cards: `GET /api/brains` returns `thumbnailVideos` (`[{videoId, type, thumbnailUrl}]`, max 4) for the card grid — mixed YouTube + web page screenshots.
+- Thumbnails: always render via `components/Thumbnail.jsx` — YouTube uses `https://img.youtube.com/vi/{videoId}/mqdefault.jpg` (320x180); web pages use `thumbnailUrl` (og:image) with a globe placeholder fallback.
+- Web page bookmarks: `type === 'web'` on the video object. TranscriptModal hides the YouTube player; ProcessModal shows only the summarizing step.
+- Web page thumbnail: the extension calls `chrome.tabs.captureVisibleTab` when the icon is clicked (before the popup tab opens), shrinks it to a 320x180 JPEG data URL in the service worker (OffscreenCanvas), and sends it as `thumbnailUrl`. Falls back to og:image / favicon if capture fails.
 - Chrome bookmarks: `%LOCALAPPDATA%\Google\Chrome\User Data\Default\Bookmarks`
 - `.btn-icon` class + inline SVGs for icon buttons (no icon library).
 - `saveToFile.js`: Blob + `createObjectURL` → `{type}_{datetime}.txt` naming.

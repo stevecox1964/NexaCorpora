@@ -3,6 +3,7 @@ import { apiService } from '../services/api';
 import { renderChatContent } from '../utils/chatUtils';
 import { saveToFile } from '../utils/saveToFile';
 import TranscriptModal from './TranscriptModal';
+import Thumbnail from './Thumbnail';
 import ProcessModal from './ProcessModal';
 
 function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
@@ -430,14 +431,10 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
             {brains.map(brain => (
               <div key={brain.id} className="brain-card" onClick={() => handleSelectBrain(brain.id)}>
                 <div className="brain-card-thumbnails">
-                  {(brain.thumbnailVideoIds || []).slice(0, 4).map(vid => (
-                    <img
-                      key={vid}
-                      src={`https://img.youtube.com/vi/${vid}/mqdefault.jpg`}
-                      alt=""
-                    />
+                  {(brain.thumbnailVideos || []).slice(0, 4).map(v => (
+                    <Thumbnail key={v.videoId} video={v} alt="" />
                   ))}
-                  {(!brain.thumbnailVideoIds || brain.thumbnailVideoIds.length === 0) && (
+                  {(!brain.thumbnailVideos || brain.thumbnailVideos.length === 0) && (
                     <div className="brain-card-empty-thumb">
                       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="1.5">
                         <path d="M12 2a8 8 0 0 0-8 8c0 3.5 2 6 4 7.5V20h8v-2.5c2-1.5 4-4 4-7.5a8 8 0 0 0-8-8z" />
@@ -569,19 +566,16 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
                 <div className="topic-video-row">
                   <a
                     className="topic-video-thumbnail"
-                    href={`https://www.youtube.com/watch?v=${video.videoId}`}
+                    href={video.videoUrl || `https://www.youtube.com/watch?v=${video.videoId}`}
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    <img
-                      src={`https://img.youtube.com/vi/${video.videoId}/mqdefault.jpg`}
-                      alt={video.videoTitle}
-                    />
+                    <Thumbnail video={video} alt={video.videoTitle} />
                   </a>
                   <div className="topic-video-info">
                     <a
                       className="topic-video-title"
-                      href={`https://www.youtube.com/watch?v=${video.videoId}`}
+                      href={video.videoUrl || `https://www.youtube.com/watch?v=${video.videoId}`}
                       target="_blank"
                       rel="noopener noreferrer"
                     >
@@ -622,7 +616,7 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
                       <div className="transcript-actions-group">
                         <button
                           className="status-indicator available clickable"
-                          onClick={() => setTranscriptView({ videoId: video.videoId, videoTitle: video.videoTitle })}
+                          onClick={() => setTranscriptView({ videoId: video.videoId, videoTitle: video.videoTitle, videoUrl: video.videoUrl, videoType: video.type })}
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -801,6 +795,8 @@ function BrainsPage({ initialBrainId, onInitialBrainHandled }) {
         <TranscriptModal
           videoId={transcriptView.videoId}
           videoTitle={transcriptView.videoTitle}
+          videoUrl={transcriptView.videoUrl}
+          videoType={transcriptView.videoType}
           onClose={() => setTranscriptView(null)}
         />
       )}
@@ -959,10 +955,7 @@ function AddVideosToBrainModal({ brainId, existingVideoIds, onClose, onAdded }) 
                   onChange={() => toggleSelect(video.videoId)}
                 />
                 <div className="brain-add-item-thumb">
-                  <img
-                    src={`https://img.youtube.com/vi/${video.videoId}/mqdefault.jpg`}
-                    alt=""
-                  />
+                  <Thumbnail video={video} alt="" />
                 </div>
                 <div className="brain-add-item-info">
                   <div className="brain-add-item-title">{video.videoTitle}</div>

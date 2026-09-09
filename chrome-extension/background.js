@@ -140,14 +140,127 @@ function scrapeYouTubePageInfo() {
 }
 // --- End of Scraper Function ---
 
-chrome.commands.onCommand.addListener((command) => {
+// --- Web Page Scraper Function (injected into any non-YouTube page) ---
+function scrapeWebPageInfo() {
+  const meta = (sel) => document.querySelector(sel)?.content?.trim() || null;
+
+  const title = meta('meta[property="og:title"]') || document.title.trim() || window.location.href;
+  const siteName = meta('meta[property="og:site_name"]') || window.location.hostname.replace(/^www\./, '');
+  const thumbnailUrl = meta('meta[property="og:image"]')
+    || document.querySelector('link[rel~="icon"]')?.href
+    || null;
+
+  // Prefer the main content region; fall back to the whole body if it is too short
+  let root = document.querySelector('main, article, [role="main"]');
+  let text = root ? (root.innerText || '') : '';
+  if (text.trim().length < 500) text = document.body?.innerText || '';
+  text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+
+  const MAX_CHARS = 300000;
+  let truncated = false;
+  if (text.length > MAX_CHARS) {
+    text = text.slice(0, MAX_CHARS) + '\n\n[Page text truncated by BookMarkManager extension]';
+    truncated = true;
+  }
+
+  return {
+    type: 'web',
+    scrapedAt: new Date().toISOString(),
+    videoId: null,                    // server derives it from the URL
+    videoTitle: title,
+    channelId: window.location.hostname,
+    channelName: siteName,
+    channelUrl: window.location.origin,
+    channelIdSource: 'hostname',
+    videoUrl: window.location.href,
+    thumbnailUrl: thumbnailUrl,
+    pageText: text,
+    pageTextLength: text.length,
+    pageTextTruncated: truncated
+  };
+}
+// --- End of Web Page Scraper ---
+
+// The tab the user was on when they opened the manager. The popup opens in its
+// own tab, so "active tab" would be the popup itself by the time it asks.
+let sourceTabId = null;
+// Screenshot of the source tab, taken while it is still visible (before the popup tab opens)
+let sourceScreenshot = null;
+
+const THUMB_W = 320;
+const THUMB_H = 180;
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+// Shrink a full-tab screenshot to a 320x180 JPEG data URL (center-crop, cover)
+async function shrinkScreenshot(dataUrl) {
+  const blob = await (await fetch(dataUrl)).blob();
+  const bitmap = await createImageBitmap(blob);
+
+  const scale = Math.max(THUMB_W / bitmap.width, THUMB_H / bitmap.height);
+  const sw = THUMB_W / scale;
+  const sh = THUMB_H / scale;
+  const sx = (bitmap.width - sw) / 2;
+  const sy = 0; // keep the top of the page (headline area)
+
+  const canvas = new OffscreenCanvas(THUMB_W, THUMB_H);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, THUMB_W, THUMB_H);
+  bitmap.close();
+
+  const out = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.75 });
+  return 'data:image/jpeg;base64,' + arrayBufferToBase64(await out.arrayBuffer());
+}
+
+async function captureSourceTab(tab) {
+  sourceScreenshot = null;
+  if (!tab || !/^https?:/.test(tab.url || '') || isYouTubeWatchUrl(tab.url)) return;
+  try {
+    const full = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 });
+    sourceScreenshot = await shrinkScreenshot(full);
+  } catch (e) {
+    console.warn('Screenshot failed (og:image will be used instead):', e.message);
+  }
+}
+
+async function openManager(tab) {
+  sourceTabId = tab ? tab.id : null;
+  await captureSourceTab(tab);
+  chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") });
+}
+
+function isYouTubeWatchUrl(url) {
+  return !!url && url.includes("youtube.com/watch");
+}
+
+async function findSourceTab() {
+  if (sourceTabId !== null) {
+    try {
+      const tab = await chrome.tabs.get(sourceTabId);
+      if (tab && tab.url) return tab;
+    } catch { /* tab was closed */ }
+  }
+  // Fallback: any open YouTube watch tab (old behaviour)
+  const tabs = await chrome.tabs.query({ url: "*://*.youtube.com/watch*" });
+  return tabs[0] || null;
+}
+
+chrome.commands.onCommand.addListener((command, tab) => {
   if (command === "open-manager") {
-    chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") });
+    openManager(tab);
   }
 });
 
 chrome.action.onClicked.addListener((tab) => {
-  chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") });
+  openManager(tab);
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -156,26 +269,42 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "getCurrentVideoInfo") {
     (async () => {
       try {
-        const tabs = await chrome.tabs.query({ url: "*://*.youtube.com/watch*" });
-        const youtubeTab = tabs[0];
+        const tab = await findSourceTab();
 
-        if (youtubeTab && youtubeTab.url && youtubeTab.url.includes("youtube.com/watch")) {
-          try {
-            const results = await chrome.scripting.executeScript({
-              target: { tabId: youtubeTab.id },
-              function: scrapeYouTubePageInfo,
-            });
-            if (results && results[0] && results[0].result && results[0].result.videoId) {
-              sendResponse({ success: true, data: results[0].result });
+        if (!tab || !tab.url) {
+          sendResponse({ success: false, error: "No page found. Open a web page or YouTube video, then click the extension icon." });
+          return;
+        }
+        if (!/^https?:/.test(tab.url)) {
+          sendResponse({ success: false, error: "This is a browser page and cannot be saved." });
+          return;
+        }
+
+        const isYouTube = isYouTubeWatchUrl(tab.url);
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            function: isYouTube ? scrapeYouTubePageInfo : scrapeWebPageInfo,
+          });
+          const data = results && results[0] && results[0].result;
+          if (isYouTube) {
+            if (data && data.videoId) {
+              sendResponse({ success: true, data: { ...data, type: 'youtube' } });
             } else {
               sendResponse({ success: false, error: "Could not extract info or not a video page." });
             }
-          } catch (e) {
-            console.error("Error scripting for current video info:", e);
-            sendResponse({ success: false, error: e.message });
+          } else {
+            if (data && data.pageText) {
+              // Prefer the real screenshot; fall back to og:image / favicon
+              if (sourceScreenshot) data.thumbnailUrl = sourceScreenshot;
+              sendResponse({ success: true, data });
+            } else {
+              sendResponse({ success: false, error: "This page has no readable text to save." });
+            }
           }
-        } else {
-          sendResponse({ success: false, error: "No YouTube video tab found. Please navigate to a YouTube video page." });
+        } catch (e) {
+          console.error("Error scripting for current page info:", e);
+          sendResponse({ success: false, error: e.message });
         }
       } catch (error) {
         console.error("Error querying tabs:", error);
@@ -188,11 +317,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   else if (request.action === "saveVideo") {
     (async () => {
       const videoInfo = request.data;
-      if (!videoInfo || !videoInfo.videoId) {
-        sendResponse({ success: false, error: "Invalid video data provided." });
+      const isWeb = videoInfo && videoInfo.type === 'web';
+      if (!videoInfo || (isWeb ? !videoInfo.videoUrl : !videoInfo.videoId)) {
+        sendResponse({ success: false, error: "Invalid page data provided." });
         return;
       }
-      if (!videoInfo.channelId || videoInfo.channelId === "N/A_ChannelID_Unavailable") {
+      if (isWeb && !videoInfo.pageText) {
+        sendResponse({ success: false, error: "Page text is empty, cannot save page." });
+        return;
+      }
+      if (!isWeb && (!videoInfo.channelId || videoInfo.channelId === "N/A_ChannelID_Unavailable")) {
         sendResponse({ success: false, error: "Channel ID is missing, cannot save video." });
         return;
       }

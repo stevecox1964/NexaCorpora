@@ -193,7 +193,7 @@ def search_similar(query_text, k=10):
 
     rows = db.execute('''
         SELECT tc.video_id, tc.content, tc.chunk_index,
-               v.video_title, v.channel_name,
+               v.video_title, v.channel_name, v.video_url, v.type, v.thumbnail_url,
                vc.distance
         FROM vec_chunks vc
         JOIN transcript_chunks tc ON tc.id = vc.chunk_id
